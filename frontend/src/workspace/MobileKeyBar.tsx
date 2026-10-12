@@ -1,4 +1,4 @@
-import { Keyboard, Maximize, MousePointer2, Pointer, ZoomIn, ZoomOut } from 'lucide-react';
+import { Keyboard, MousePointer2, Pointer } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { type Modifiers, NO_MODIFIERS, type SpecialKey, type SpecialKeyTarget } from '../sessions/specialKeys';
 
@@ -28,9 +28,6 @@ const F_KEYS = Array.from({ length: 12 }, (_, i) => `F${i + 1}` as SpecialKey);
 
 /** Remote-desktop extras on touch devices (implemented by GuacSession). */
 export interface DesktopTouchControls {
-  zoomIn(): void;
-  zoomOut(): void;
-  zoomReset(): void;
   pointerMode: 'touchpad' | 'touchscreen';
   setPointerMode(mode: 'touchpad' | 'touchscreen'): void;
 }
@@ -38,7 +35,8 @@ export interface DesktopTouchControls {
 /**
  * Special keys for touch devices. Ctrl/Alt/Shift/Win are sticky: tap once and they apply to the next
  * key (from this bar or the phone keyboard), then release. Buttons never take focus, so the phone
- * keyboard stays open while tapping them. Remote desktops also get pointer-mode and zoom buttons.
+ * keyboard stays open while tapping them. Remote desktops also get a pointer-mode toggle (zoom is a
+ * two-finger pinch on the desktop itself).
  */
 export function MobileKeyBar({ target, desktop }: { target: SpecialKeyTarget; desktop?: DesktopTouchControls }) {
   const [mods, setMods] = useState<Modifiers>(NO_MODIFIERS);
@@ -70,9 +68,6 @@ export function MobileKeyBar({ target, desktop }: { target: SpecialKeyTarget; de
                   }}>
             {pointer === 'touchpad' ? <MousePointer2 size={15} /> : <Pointer size={15} />}
           </button>
-          <button className="key" title="Zoom out" onClick={() => desktop.zoomOut()}><ZoomOut size={15} /></button>
-          <button className="key" title="Zoom in" onClick={() => desktop.zoomIn()}><ZoomIn size={15} /></button>
-          <button className="key" title="Fit to screen" onClick={() => desktop.zoomReset()}><Maximize size={15} /></button>
         </>
       )}
       {MOD_KEYS.filter((m) => Boolean(desktop) || !m.desktopOnly).map((m) => (

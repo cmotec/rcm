@@ -57,6 +57,7 @@ export class GuacSession extends BaseSession implements SpecialKeyTarget {
     // Key events bubble to the session element, where Guacamole.Keyboard handles them; keep the field empty.
     this.keyInput.addEventListener('input', () => window.setTimeout(() => (this.keyInput.value = ''), 0));
     this.element.appendChild(this.keyInput);
+    if (window.matchMedia('(pointer: coarse)').matches) this.installPinchZoom();
     this.element.addEventListener('focus', () => void this.pushLocalClipboard());
     this.element.addEventListener('dragover', (e) => {
       if (this.uploadsAllowed) e.preventDefault();
@@ -314,27 +315,68 @@ export class GuacSession extends BaseSession implements SpecialKeyTarget {
     localStorage.setItem('touch.pointer', mode);
   }
 
-  setZoom(zoom: number): void {
+  /** Zoom keeping the content under (anchorX, anchorY) — viewport coordinates — in place. */
+  private setZoomAt(zoom: number, anchorX: number, anchorY: number): void {
     const host = this.displayHost;
-    // keep the centre of the visible area in place while zooming
-    const cx = (host.scrollLeft + host.clientWidth / 2) / Math.max(1, host.scrollWidth);
-    const cy = (host.scrollTop + host.clientHeight / 2) / Math.max(1, host.scrollHeight);
+    const rect = host.getBoundingClientRect();
+    const ax = anchorX - rect.left;
+    const ay = anchorY - rect.top;
+    const rx = (host.scrollLeft + ax) / Math.max(1, host.scrollWidth);
+    const ry = (host.scrollTop + ay) / Math.max(1, host.scrollHeight);
     this.zoom = Math.min(5, Math.max(1, zoom));
     this.rescale();
-    host.scrollLeft = cx * host.scrollWidth - host.clientWidth / 2;
-    host.scrollTop = cy * host.scrollHeight - host.clientHeight / 2;
+    host.scrollLeft = rx * host.scrollWidth - ax;
+    host.scrollTop = ry * host.scrollHeight - ay;
   }
 
-  zoomIn(): void {
-    this.setZoom(this.zoom * 1.4);
-  }
-
-  zoomOut(): void {
-    this.setZoom(this.zoom / 1.4);
-  }
-
-  zoomReset(): void {
-    this.setZoom(1);
+  /**
+   * Two-finger pinch zooms (and two-finger movement pans while pinching). Listens in the capture
+   * phase on the display host: a two-finger tap or plain two-finger drag still reaches the touchpad
+   * (right click / scroll); once the finger distance changes noticeably the gesture becomes a zoom and
+   * is no longer passed to the remote pointer.
+   */
+  private installPinchZoom(): void {
+    const host = this.displayHost;
+    let start: { dist: number; zoom: number; mx: number; my: number } | null = null;
+    let pinching = false;
+    const metrics = (t: TouchList) => {
+      const [a, b] = [t[0], t[1]];
+      return {
+        dist: Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY),
+        mx: (a.clientX + b.clientX) / 2,
+        my: (a.clientY + b.clientY) / 2,
+      };
+    };
+    host.addEventListener('touchstart', (e) => {
+      if (e.touches.length === 2) {
+        const m = metrics(e.touches);
+        start = { dist: Math.max(1, m.dist), zoom: this.zoom, mx: m.mx, my: m.my };
+        pinching = false;
+      } else if (e.touches.length > 2) {
+        start = null;
+      }
+    }, { capture: true, passive: true });
+    host.addEventListener('touchmove', (e) => {
+      if (!start || e.touches.length !== 2) return;
+      const m = metrics(e.touches);
+      if (!pinching && Math.abs(m.dist - start.dist) < 24) return; // not (yet) a pinch: leave to the touchpad
+      pinching = true;
+      e.stopPropagation();
+      e.preventDefault();
+      this.setZoomAt(start.zoom * (m.dist / start.dist), m.mx, m.my);
+      // pan with the finger midpoint
+      host.scrollLeft -= m.mx - start.mx;
+      host.scrollTop -= m.my - start.my;
+      start = { ...start, mx: m.mx, my: m.my };
+    }, { capture: true, passive: false });
+    // Finger-lift events always reach the touchpad so its finger count resets; a pinch takes longer
+    // than its 250 ms tap window, so it is not mistaken for a (right) click.
+    const end = (e: TouchEvent) => {
+      if (e.touches.length < 2) start = null;
+      if (e.touches.length === 0) pinching = false;
+    };
+    host.addEventListener('touchend', end, { capture: true });
+    host.addEventListener('touchcancel', end, { capture: true });
   }
 
   /** When zoomed in, scroll so the pointer stays visible (x/y in display-element pixels). */
