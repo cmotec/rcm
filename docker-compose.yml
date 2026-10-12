@@ -76,7 +76,11 @@ services:
 
   guacd:
     <<: *hardening
-    image: guacamole/guacd:1.6.0
+    # Upstream guacd 1.6.0 plus /drives and /recordings owned by its user, so the named volumes are
+    # created writable for guacd (see guacd/Dockerfile) without a root init container.
+    build: ./guacd
+    image: ${IMAGE_PREFIX:-local}/connections-guacd:${IMAGE_TAG:-latest}
+    pull_policy: build
     # No published ports: guacd is reachable only from the api container (network "gateway").
     volumes:
       - drives:/drives
@@ -89,21 +93,8 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
-    depends_on:
-      volume-init:
-        condition: service_completed_successfully
     networks:
       - gateway
-
-  # One-shot: make the drive/recording volumes writable for guacd (uid 1000) without running guacd as root.
-  volume-init:
-    image: busybox:1.37
-    command: ["sh", "-c", "chown -R 1000:1000 /drives /recordings && chmod 0750 /drives /recordings"]
-    volumes:
-      - drives:/drives
-      - recordings:/recordings
-    restart: "no"
-    network_mode: none
 
 networks:
   app: {}

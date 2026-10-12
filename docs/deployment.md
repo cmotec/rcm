@@ -6,8 +6,13 @@
 |---|---|---|---|
 | `web` | built from `frontend/` (nginx-unprivileged) | serves the SPA, reverse-proxies `/api` (incl. WebSockets) | published port (`HTTP_PORT`, default 8080) |
 | `api` | built from `backend/` (python:3.12-slim, uid 10001) | REST API, WebSocket tunnels, SSH/SFTP/FTP, secret sync | internal only |
-| `guacd` | `guacamole/guacd:1.6.0` | RDP/VNC (and optional SSH) protocol gateway | **never published** |
-| `volume-init` | `busybox` (one-shot) | makes the drive/recording volumes writable for guacd | – |
+| `guacd` | built from `guacd/` (`guacamole/guacd:1.6.0` + data directories owned by guacd, uid 1000) | RDP/VNC (and optional SSH) protocol gateway | **never published** |
+
+guacd runs unprivileged. Its image pre-creates `/drives` and `/recordings` owned by the guacd user,
+and Docker copies that owner into the `drives` and `recordings` volumes when it creates them, so
+no root init container is needed. Upgrading from a version with the one-shot `volume-init`
+container: the existing volumes are already owned by uid 1000, and the leftover stopped container
+can be removed (`docker compose up -d --remove-orphans`, or delete it in Arcane).
 
 Networks: `app` (web ↔ api) and `gateway` (api ↔ guacd). guacd is not on the `app`
 network and has no published port. The api and guacd containers need outbound access to

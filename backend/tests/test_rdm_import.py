@@ -80,7 +80,7 @@ def test_parse_xml_export() -> None:
     assert dc.settings == {"cert_policy": "ignore", "security": "nla"}
     assert dc.username == "administrator" and dc.domain == "ACME"
     unsupported = {u["setting"]: u["value"] for u in dc.unsupported}
-    assert unsupported.get("RDP/KeyboardHook") == "OnTheRemoteComputer"  # reported, not dropped
+    assert "RDP/KeyboardHook" not in unsupported  # RDM client bookkeeping, not a setting
     assert all("AQAAAN" not in v for v in unsupported.values())  # encrypted value never echoed
 
     ssh = by_name["DC01 SSH"]
@@ -126,3 +126,102 @@ def test_split_host_port() -> None:
     assert split_host_port("rdp://user@host.example:22/x") == ("host.example", 22)
     assert split_host_port("[fe80::1]:22") == ("fe80::1", 22)
     assert split_host_port("fe80::1") == ("fe80::1", None)
+
+
+RDM_PARENT_XML = r"""<?xml version="1.0" encoding="utf-8"?>
+<RDMExport><Connections>
+  <Connection>
+    <ConnectionType>Sftp</ConnectionType>
+    <CredentialConnectionGroup>0 Users</CredentialConnectionGroup>
+    <CredentialConnectionSavedPath>--- Bei Verbindung abfragen ---</CredentialConnectionSavedPath>
+    <Group>VMs\DMZ</Group>
+    <HostSourceMode>Inherited</HostSourceMode>
+    <ID>00000000-0000-0000-0000-00000000000a</ID>
+    <Name>SFTP</Name>
+    <ParentID>00000000-0000-0000-0000-00000000000b</ParentID>
+    <Ftp><Directory>/var/lib/iso</Directory><Port>22</Port><ProxyType>HttpConnect</ProxyType>
+         <ShowLocalFiles>false</ShowLocalFiles></Ftp>
+    <Security><AllowOffline>False</AllowOffline><ViewOverride>Everyone</ViewOverride></Security>
+  </Connection>
+  <Connection>
+    <ConnectionType>SSHShell</ConnectionType>
+    <CredentialConnectionGroup>0 Users</CredentialConnectionGroup>
+    <CredentialConnectionSavedPath>---Bei Verbindung abfragen---</CredentialConnectionSavedPath>
+    <Description>sudo nano /etc/app.yaml</Description>
+    <Group>VMs\DMZ</Group>
+    <ID>00000000-0000-0000-0000-00000000000b</ID>
+    <Name>vm0034(Mailserver)</Name>
+    <Status>{B299F468-BC24-43cb-9417-4FEDFC813E7C}</Status>
+    <MetaInformation><AllowMultipleConnections>True</AllowMultipleConnections><OwnerText>Owner</OwnerText></MetaInformation>
+    <Terminal><Host>VM0034.example.org</Host><PrivateKeyPromptForPassPhrase>false</PrivateKeyPromptForPassPhrase>
+              <ProxyType>Socks4</ProxyType></Terminal>
+  </Connection>
+  <Connection>
+    <Url>ws0001.example.org</Url>
+    <SoundHook>DoNotPlay</SoundHook>
+    <ConnectionType>RDPConfigured</ConnectionType>
+    <CredentialConnectionSavedPath>0 Users\Jane Admin</CredentialConnectionSavedPath>
+    <Group>Other</Group>
+    <ID>00000000-0000-0000-0000-00000000000c</ID>
+    <Name>WS0001</Name>
+  </Connection>
+  <Connection>
+    <ConnectionType>SSHShell</ConnectionType>
+    <Group>Other</Group>
+    <ID>00000000-0000-0000-0000-00000000000d</ID>
+    <Name>KVM01 (KVM of SV02)</Name>
+    <Terminal><AlwaysAskForPassword>true</AlwaysAskForPassword><Host>KVM01.example.org</Host></Terminal>
+  </Connection>
+  <Connection>
+    <ConnectionType>SSHShell</ConnectionType>
+    <CredentialConnectionSavedPath>0 Users\Missing Entry</CredentialConnectionSavedPath>
+    <ID>00000000-0000-0000-0000-00000000000e</ID>
+    <Name>10.0.0.5</Name>
+    <Terminal><Host>10.0.0.5</Host></Terminal>
+  </Connection>
+  <Connection>
+    <ConnectionType>Group</ConnectionType>
+    <Group>0 Users</Group>
+    <ID>00000000-0000-0000-0000-00000000000f</ID>
+    <Name>0 Users</Name>
+    <GroupDetails><GroupType>Credentials</GroupType></GroupDetails>
+  </Connection>
+  <Connection>
+    <ConnectionType>Credential</ConnectionType>
+    <Group>0 Users</Group>
+    <ID>00000000-0000-0000-0000-000000000010</ID>
+    <Name>Jane Admin</Name>
+    <Credentials />
+  </Connection>
+</Connections></RDMExport>
+""".encode()
+
+
+def test_parse_parent_links_credentials_and_labels() -> None:
+    parsed = parse("export.rdm", RDM_PARENT_XML)
+    by_id = {i.source_id[-2:]: i for i in parsed.items}
+    sftp, mail, ws, kvm, ip, group, cred = (by_id[k] for k in ("0a", "0b", "0c", "0d", "0e", "0f", "10"))
+
+    # sub-connection: linked to its parent, inherits host and (identical) credential setting
+    assert sftp.parent_source_id == mail.source_id and sftp.host is None
+    assert sftp.settings == {"start_directory": "/var/lib/iso"} and sftp.port == 22
+    assert sftp.credential_mode == "choose" and sftp.credential_status == "inherited"
+    assert sftp.unsupported == []  # proxy type without proxy, Security, ShowLocalFiles: bookkeeping
+
+    # label from the name, FQDN split, notes kept below the label
+    assert mail.hostname == "VM0034" and mail.search_domain == "example.org" and mail.host == "VM0034.example.org"
+    assert mail.description == "Mailserver\n\nsudo nano /etc/app.yaml"
+    assert mail.credential_mode == "choose" and mail.credential_status == "choose_at_connect"
+    assert mail.unsupported == []
+
+    assert ws.description is None and ws.hostname == "ws0001"
+    assert ws.credential_source_id == cred.source_id and ws.settings == {"disable_audio": True}
+    assert kvm.description == "KVM of SV02" and kvm.credential_mode == "prompt"
+    assert ip.hostname == "10.0.0.5" and ip.search_domain is None and ip.description is None
+    assert ip.credential_status == "reference_missing" and ip.warnings
+
+    assert group.kind == "folder" and group.credential_folder
+    # preview order: folders, credentials, then connections by folder with children right after parents
+    order = [i.source_id[-2:] for i in parsed.items]
+    assert order.index("0b") + 1 == order.index("0a")
+    assert order[:2] == ["0f", "10"]

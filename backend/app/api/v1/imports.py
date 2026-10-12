@@ -20,7 +20,7 @@ from app.services import audit
 from app.services.auth import now
 from app.services.authz import Perm
 from app.services.importers.rdm import parse
-from app.services.resolution import default_port
+from app.services.resolution import default_port, is_qualified
 
 router = APIRouter(prefix="/imports", tags=["import"])
 
@@ -51,12 +51,13 @@ def _job_out(job: m.ImportJob, include_items: bool = True) -> dict[str, Any]:
 
 async def _detect_duplicates(db: AsyncSession, preview: dict[str, Any]) -> None:
     rows = (await db.execute(select(m.Connection.id, m.Connection.name, m.Connection.protocol, m.Connection.hostname,
-                                    m.Connection.port, m.Connection.import_source))).all()
+                                    m.Connection.search_domain, m.Connection.port, m.Connection.import_source))).all()
     by_source = {(r.import_source or {}).get("source_id"): r for r in rows if r.import_source}
     by_endpoint: dict[tuple[str, str, int | None], Any] = {}
     for r in rows:
         if r.hostname:
-            by_endpoint[(r.protocol, r.hostname.lower(), r.port or default_port(r.protocol))] = r
+            full = r.hostname if is_qualified(r.hostname) or not r.search_domain else f"{r.hostname}.{r.search_domain}"
+            by_endpoint[(r.protocol, full.lower(), r.port or default_port(r.protocol))] = r
     for item in preview["items"]:
         if item["kind"] != "connection":
             continue
@@ -156,6 +157,7 @@ async def apply_import(job_id: uuid.UUID, body: ApplyIn, principal: Principal = 
     created_folders: list[str] = []
     source_to_conn: dict[str, uuid.UUID] = {}
     source_to_cred: dict[str, uuid.UUID] = {}
+    choose_at_connect: list[str] = []
 
     def is_selected(it: dict[str, Any]) -> bool:
         return selected is None or it["source_id"] in selected
@@ -173,17 +175,26 @@ async def apply_import(job_id: uuid.UUID, body: ApplyIn, principal: Principal = 
             report["skipped"].append({"source_id": it["source_id"], "name": it["name"],
                                       "reason": f"unsupported entry type '{it['entry_type']}'"})
         elif it["kind"] == "folder":
+            if it.get("credential_folder"):  # RDM group of credential entries: credentials have no folders
+                continue
             await folder_for(it["folder_path"])
         elif it["kind"] == "credential":
+            meta: dict[str, Any] = {"imported_from": "rdm", "source_id": it["source_id"]}
+            if it.get("folder_path"):
+                meta["rdm_group"] = "\\".join(it["folder_path"])
             cred = m.Credential(id=uuid.uuid4(), name=it["name"][:255], username=it.get("username"),
                                 domain=it.get("domain"), description=it.get("description"), owner_id=principal.id,
-                                meta={"imported_from": "rdm", "source_id": it["source_id"]})
+                                meta=meta)
             db.add(cred)
             source_to_cred[it["source_id"]] = cred.id
             report["created"]["credentials"] += 1
             if it.get("credential_status") == "encrypted_not_migrated":
                 report["manual_migration"].append({"type": "credential", "id": str(cred.id), "name": it["name"],
                                                    "reason": "password not migrated (encrypted in export)"})
+            elif not it.get("username"):
+                report["manual_migration"].append({"type": "credential", "id": str(cred.id), "name": it["name"],
+                                                   "reason": "the export contains no username or password for "
+                                                             "this entry; fill them in"})
     await db.flush()
 
     pending = [it for it in items if it["kind"] == "connection" and is_selected(it)]
@@ -215,14 +226,23 @@ async def apply_import(job_id: uuid.UUID, body: ApplyIn, principal: Principal = 
                                        "message": f"protocol settings dropped: {exc.detail}",
                                        "settings": it.get("settings")})
         cred_ref = source_to_cred.get(it.get("credential_source_id") or "")
-        if cred_ref:
+        mode = it.get("credential_mode")
+        if it.get("credential_status") == "inherited" and parent_id is not None:
+            auth_mode = "inherit"
+        elif cred_ref:
             auth_mode = "credential"
+        elif mode == "choose":
+            auth_mode = "credential"  # no pinned credential: the user picks one at connect time
+            choose_at_connect.append(it["name"])
+        elif mode == "prompt":
+            auth_mode = "interactive"
         elif it.get("username"):
             auth_mode = "direct"
         else:
             auth_mode = "inherit"
         conn = m.Connection(
-            id=uuid.uuid4(), name=it["name"][:255], protocol=protocol, hostname=(it.get("host") or None),
+            id=uuid.uuid4(), name=it["name"][:255], protocol=protocol,
+            hostname=(it.get("hostname") or it.get("host") or None), search_domain=it.get("search_domain"),
             port=it.get("port"), folder_id=folder_id, parent_id=parent_id, auth_mode=auth_mode,
             username=it.get("username") if auth_mode == "direct" else None,
             domain=it.get("domain") if auth_mode == "direct" else None, credential_id=cred_ref,
@@ -238,7 +258,7 @@ async def apply_import(job_id: uuid.UUID, body: ApplyIn, principal: Principal = 
         if it.get("credential_status") == "encrypted_not_migrated":
             report["manual_migration"].append({"type": "connection", "id": str(conn.id), "name": it["name"],
                                                "reason": "password not migrated (encrypted in export)"})
-        elif it.get("credential_source_id") and not cred_ref:
+        elif (it.get("credential_source_id") and not cred_ref) or it.get("credential_status") == "reference_missing":
             report["manual_migration"].append({"type": "connection", "id": str(conn.id), "name": it["name"],
                                                "reason": "referenced RDM credential entry was not part of this import"})
         if it.get("unsupported"):
@@ -258,6 +278,12 @@ async def apply_import(job_id: uuid.UUID, body: ApplyIn, principal: Principal = 
             report["errors"].append({"source_id": it["source_id"], "name": it["name"], "error": str(exc)[:300]})
 
     report["created"]["folders"] = len(created_folders)
+    if choose_at_connect:
+        report["warnings"].append({
+            "source_id": None, "name": f"{len(choose_at_connect)} connection(s)",
+            "message": "'prompt on connection' was imported as 'choose a credential at connect time': users pick "
+                       "from all credentials they are allowed to use (RDM limited the list to one credential group)",
+        })
     job.status = "applied"
     job.applied_at = now()
     job.result = report

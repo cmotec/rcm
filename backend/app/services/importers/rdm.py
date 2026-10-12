@@ -16,14 +16,29 @@ Rules
   etc.) are **not** decrypted. The item is marked
   ``credential_status = "encrypted_not_migrated"``, and the report explains
   the manual migration.
+* Sub-connections linked with ``<ParentID>`` (e.g. an "SFTP" entry with
+  ``HostSourceMode=Inherited``) become child connections that inherit the
+  parent's hostname.
+* Credential settings: ``CredentialConnectionID`` and
+  ``CredentialConnectionSavedPath`` (``Group\\Entry``) reference a credential
+  entry. The "prompt on connection" placeholder (``--- Bei Verbindung abfragen ---``
+  and its translations) maps to "choose a credential at connect time", and
+  ``AlwaysAskForPassword`` maps to interactive authentication.
+* Labels: the tree shows ``hostname (description)``, so a name like
+  ``host01 (Mail)`` puts "Mail" into the description, and an FQDN is split into
+  hostname and domain (``host01`` + ``example.org``).
+* RDM client bookkeeping (owner/resource texts, offline/temporary-access
+  security, proxy types without a proxy, …) is ignored rather than reported.
 """
 
 from __future__ import annotations
 
 import csv
 import io
+import ipaddress
 import re
 import uuid
+from collections import defaultdict
 from dataclasses import asdict, dataclass, field
 from typing import Any
 from xml.etree.ElementTree import Element  # noqa: S405 - type only; parsing uses defusedxml
@@ -50,7 +65,23 @@ NOISE = {
     "MetaInformation", "SortPriority", "OpenEmbedded", "ConnectionType", "Name", "Group", "Url", "Description",
     "Keywords", "Tags", "CredentialConnectionID", "ParentID", "ImageName", "Image", "DataEntryConnectionType",
     "AutoUpdateOnOpen", "Events", "GroupTab", "ShowInTrayIcon", "ConnectionSubType", "TabPage",
+    "AppVersion", "Status", "HostSourceMode", "CredentialConnectionGroup", "CredentialConnectionSavedPath",
 }
+# Subtrees that are RDM-only (offline cache, temporary access, …) and have no meaning here.
+NOISE_SUBTREES = {"Security", "GroupDetails"}
+# Leaf tags that are RDM client bookkeeping wherever they appear.
+NOISE_LEAVES = {
+    "OwnerText", "ResourceText", "AllowMultipleConnections", "PrivateKeyPromptForPassPhrase", "ShowLocalFiles",
+    "KeyboardHook", "AlwaysAskForPassword",
+}
+PROXY_HOST_TAGS = ("ProxyHost", "ProxyHostname", "ProxyServer")
+# CredentialConnectionSavedPath placeholders: "--- Prompt on connection ---" and translations.
+PLACEHOLDER = re.compile(r"^\s*(?:-{2,}|<)(.*?)(?:-{2,}|>)\s*$")
+PROMPT_WORDS = ("abfragen", "prompt", "ask", "demander", "preguntar", "chiedi", "vragen")
+INHERIT_WORDS = ("inherit", "geerbt", "vererbt", "hérit", "herit")
+NONE_WORDS = ("none", "kein", "aucun", "ningun")
+# "host01 (Mail server)" / "host01(Mail server)"
+LABEL_IN_NAME = re.compile(r"^\s*([^\s()]+)\s*\((.+)\)\s*$")
 
 
 @dataclass
@@ -60,17 +91,25 @@ class ImportItem:
     name: str
     entry_type: str
     protocol: str | None = None
-    host: str | None = None
+    host: str | None = None  # as exported (FQDN or IP)
+    hostname: str | None = None  # host without its domain (what the connection stores)
+    search_domain: str | None = None
     port: int | None = None
     folder_path: list[str] = field(default_factory=list)
     parent_source_id: str | None = None
     credential_source_id: str | None = None
+    # reference | choose (pick at connect) | prompt (type at connect) | inherit | None (no setting)
+    credential_mode: str | None = None
+    credential_path: str | None = None  # "Group\Entry" from CredentialConnectionSavedPath
+    credential_folder: bool = False  # RDM group holding credential entries (not a connection folder)
     username: str | None = None
     domain: str | None = None
     description: str | None = None
     tags: list[str] = field(default_factory=list)
     settings: dict[str, Any] = field(default_factory=dict)
-    credential_status: str = "none"  # none | username_only | encrypted_not_migrated | reference
+    # none | username_only | encrypted_not_migrated | reference | reference_missing | choose_at_connect
+    # | prompt_at_connect | inherited
+    credential_status: str = "none"
     unsupported: list[dict[str, str]] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     duplicate_of: str | None = None
@@ -191,6 +230,57 @@ def _redact(path: str, value: str) -> str:
     return "[redacted]" if SENSITIVE.search(path.rsplit("/", 1)[-1]) else value[:300]
 
 
+def _is_ip(host: str) -> bool:
+    try:
+        ipaddress.ip_address(host.strip("[]"))
+        return True
+    except ValueError:
+        return False
+
+
+def split_fqdn(host: str) -> tuple[str, str | None]:
+    """``web01.example.org`` → (``web01``, ``example.org``). IPs and single labels are left alone."""
+    h = host.strip()
+    if _is_ip(h) or h.endswith(".") or "." not in h:
+        return h, None
+    name, _, domain = h.partition(".")
+    if not name or not domain:
+        return h, None
+    return name, domain.lower()
+
+
+def _label_from_name(name: str, host: str | None, short: str | None) -> str | None:
+    """What the RDM name adds to the hostname (the tree shows ``hostname (description)``)."""
+    if not host:
+        return None
+    known = {host.lower(), (short or "").lower()}
+    m = LABEL_IN_NAME.match(name)
+    if m and m.group(1).lower() in known:
+        return m.group(2).strip() or None
+    if name.strip().lower() in known:
+        return None
+    return name.strip() or None
+
+
+def _credential_placeholder(value: str) -> str | None:
+    """Classify a CredentialConnectionSavedPath placeholder: choose | inherit | none | unknown (None = a path)."""
+    m = PLACEHOLDER.match(value)
+    if not m:
+        return None
+    word = m.group(1).strip().lower()
+    if any(w in word for w in PROMPT_WORDS):
+        return "choose"
+    if any(w in word for w in INHERIT_WORDS):
+        return "inherit"
+    if any(w in word for w in NONE_WORDS):
+        return "none"
+    return "unknown"
+
+
+def _path_key(segments: list[str]) -> str:
+    return "\\".join(s.strip().lower() for s in segments if s.strip())
+
+
 # --------------------------------------------------------------------------- XML
 
 
@@ -225,6 +315,8 @@ def _protocol_settings(protocol: str, el: Element, consumed: set[str], item: Imp
                 s["remote_app_args"] = cmd
         if _bool(take("UsesHardDrives", "RedirectDrives", "Drives")):
             s["enable_drive"] = True
+        if (take("SoundHook") or "").lower() == "donotplay":
+            s["disable_audio"] = True
         prog = take("AlternateShell", "StartProgram", "ShellWorkingDirectory")
         if prog:
             s["initial_program"] = prog
@@ -250,18 +342,39 @@ def _protocol_settings(protocol: str, el: Element, consumed: set[str], item: Imp
         elif "explicit" in enc or enc in ("tls", "ssl"):
             item.protocol = "ftps"
             s["tls_mode"] = "explicit"
-        start = take("RemoteDirectory", "InitialDirectory", "RemoteFolder")
-        if start:
+        start = take("RemoteDirectory", "InitialDirectory", "RemoteFolder", "Directory")
+        if start and start != "/":
             s["start_directory"] = start
     elif protocol in ("ssh", "sftp"):
         keyfile = take("PrivateKeyPath", "PrivateKeyFile", "PrivateKeyFileName")
         if keyfile:
             item.warnings.append(f"private key file '{keyfile}' refers to the RDM client machine; "
                                  "import the key into a credential entry manually")
-        start = take("RemoteDirectory", "InitialDirectory")
-        if start and protocol == "sftp":
+        start = take("RemoteDirectory", "InitialDirectory", "Directory")
+        if start and start != "/" and protocol == "sftp":
             s["start_directory"] = start
     return s
+
+
+def _credential_setting(el: Element, item: ImportItem) -> None:
+    """How the entry gets its credentials (the reference by path is resolved after parsing)."""
+    if item.credential_source_id:
+        item.credential_mode, item.credential_status = "reference", "reference"
+        return
+    saved = _child_text(el, "CredentialConnectionSavedPath")
+    if _bool(_find_text(el, "AlwaysAskForPassword")[0]):
+        item.credential_mode, item.credential_status = "prompt", "prompt_at_connect"
+    elif saved:
+        kind = _credential_placeholder(saved)
+        if kind is None:
+            item.credential_mode, item.credential_path = "reference", saved
+            item.credential_status = "reference"
+        elif kind == "choose":
+            item.credential_mode, item.credential_status = "choose", "choose_at_connect"
+        elif kind == "inherit":
+            item.credential_mode, item.credential_status = "inherit", "inherited"
+        elif kind == "unknown":
+            item.warnings.append(f"credential setting '{saved}' was not understood; set authentication manually")
 
 
 def _parse_xml_connection(el: Element, parent_id: str | None, items: list[ImportItem]) -> None:
@@ -276,12 +389,17 @@ def _parse_xml_connection(el: Element, parent_id: str | None, items: list[Import
     if etype in FOLDER_TYPES:
         if not path or path[-1] != name:
             path = [*path, name]
-        items.append(ImportItem(source_id=source_id, kind="folder", name=name, entry_type=entry_type, folder_path=path,
-                                description=_child_text(el, "Description")))
+        group_type, _ = _find_text(el, "GroupType")
+        cred_folder = (group_type or "").lower() == "credentials"
+        items.append(ImportItem(source_id=source_id, kind="folder", name=name,
+                                entry_type=f"{entry_type} (credentials, not created)" if cred_folder else entry_type,
+                                folder_path=path, description=_child_text(el, "Description"),
+                                credential_folder=cred_folder))
         return
 
     item = ImportItem(source_id=source_id, kind="connection", name=name, entry_type=entry_type, folder_path=path,
-                      parent_source_id=parent_id, description=_child_text(el, "Description"),
+                      parent_source_id=parent_id or _child_text(el, "ParentID"),
+                      description=_child_text(el, "Description"),
                       tags=_tags(_child_text(el, "Keywords", "Tags")),
                       credential_source_id=_child_text(el, "CredentialConnectionID"))
 
@@ -302,6 +420,12 @@ def _parse_xml_connection(el: Element, parent_id: str | None, items: list[Import
             host, hp2 = split_host_port(h or "")
             hp = hp or hp2
     item.host = host or None
+    if item.host:
+        item.hostname, item.search_domain = split_fqdn(item.host)
+        if item.kind == "connection":
+            label = _label_from_name(name, item.host, item.hostname)
+            if label and label != (item.description or "").split("\n", 1)[0].strip():
+                item.description = f"{label}\n\n{item.description}" if item.description else label
     port_s, port_path = _find_text(el, "Port", "HostPort")
     if port_path:
         consumed.add(port_path)
@@ -318,20 +442,24 @@ def _parse_xml_connection(el: Element, parent_id: str | None, items: list[Import
     pw, pp = _find_text(el, "SafePassword", "Password", "EncryptedPassword", "ProtectedPassword", "PasswordItem")
     if pp:
         consumed.add(pp)
+    if item.kind != "credential":
+        _credential_setting(el, item)
     if pw:
         item.credential_status = "encrypted_not_migrated"
         item.warnings.append("password is encrypted in the RDM export and was not migrated")
-    elif item.credential_source_id:
-        item.credential_status = "reference"
-    elif u:
+    elif item.credential_status == "none" and u:
         item.credential_status = "username_only"
 
     if item.kind == "connection" and item.protocol:
         item.settings = _protocol_settings(item.protocol, el, consumed, item)
 
+    has_proxy_host = _find_text(el, *PROXY_HOST_TAGS)[0] is not None
     for path_, value in _leaves(el):
         top = path_.split("/", 1)[0].split("@", 1)[0]
-        if path_ in consumed or (top in NOISE and "/" not in path_):
+        leaf = path_.rsplit("/", 1)[-1].split("@", 1)[0]
+        if path_ in consumed or (top in NOISE and "/" not in path_) or top in NOISE_SUBTREES:
+            continue
+        if leaf in NOISE_LEAVES or (leaf == "ProxyType" and not has_proxy_host):
             continue
         if value.lower() in ("false", "0", "none", "default", "00000000-0000-0000-0000-000000000000"):
             continue
@@ -367,8 +495,73 @@ def parse_xml(data: bytes) -> ParsedImport:
         _parse_xml_connection(root, None, items)
     else:
         walk(root)
-    return ParsedImport(format="rdm-xml", items=items,
+    _link_credentials(items)
+    return ParsedImport(format="rdm-xml", items=_tree_order(items),
                         errors=[] if items else ["no <Connection> entries found in the file"])
+
+
+def _link_credentials(items: list[ImportItem]) -> None:
+    """Resolve "Group\\Entry" credential paths, and let children inherit when they match their parent."""
+    by_path: dict[str, ImportItem] = {}
+    by_name: dict[str, list[ImportItem]] = defaultdict(list)
+    for c in items:
+        if c.kind == "credential":
+            by_path.setdefault(_path_key([*c.folder_path, c.name]), c)
+            by_name[c.name.strip().lower()].append(c)
+    for it in items:
+        if it.credential_mode != "reference" or it.credential_source_id or not it.credential_path:
+            continue
+        segments = [s for s in re.split(r"[\\/]", it.credential_path) if s.strip()]
+        hit = by_path.get(_path_key(segments))
+        if hit is None and segments and len(by_name.get(segments[-1].strip().lower(), [])) == 1:
+            hit = by_name[segments[-1].strip().lower()][0]
+        if hit is not None:
+            it.credential_source_id = hit.source_id
+        else:
+            it.credential_status = "reference_missing"
+            it.warnings.append(f"credential entry '{it.credential_path}' is not part of this export")
+
+    by_id = {i.source_id: i for i in items}
+    for it in items:
+        parent = by_id.get(it.parent_source_id or "")
+        if parent is None or parent.kind != "connection" or it.credential_mode is None:
+            continue
+        same = (it.credential_mode == parent.credential_mode
+                and it.credential_source_id == parent.credential_source_id and not it.username)
+        if same:  # e.g. the "SFTP" child prompts like its SSH parent: inherit (if the parent is imported too)
+            it.credential_status = "inherited"
+
+
+def _tree_order(items: list[ImportItem]) -> list[ImportItem]:
+    """Folders, credentials, then connections by folder and name, each parent followed by its children."""
+    rank = {"folder": 0, "credential": 1}
+    ids = {i.source_id for i in items}
+    children: dict[str, list[ImportItem]] = defaultdict(list)
+    roots: list[ImportItem] = []
+    for i in items:
+        if i.parent_source_id in ids and i.parent_source_id != i.source_id:
+            children[i.parent_source_id or ""].append(i)
+        else:
+            roots.append(i)
+
+    def key(i: ImportItem) -> tuple[int, list[str], str]:
+        return rank.get(i.kind, 2), [p.lower() for p in i.folder_path], i.name.lower()
+
+    out: list[ImportItem] = []
+    seen: set[str] = set()
+
+    def emit(i: ImportItem) -> None:
+        if i.source_id in seen:
+            return
+        seen.add(i.source_id)
+        out.append(i)
+        for c in sorted(children.get(i.source_id, []), key=key):
+            emit(c)
+
+    for r in sorted(roots, key=key):
+        emit(r)
+    out.extend(i for i in items if i.source_id not in seen)  # parent cycles: keep everything
+    return out
 
 
 # --------------------------------------------------------------------------- CSV
