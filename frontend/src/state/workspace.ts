@@ -22,6 +22,9 @@ interface WorkspaceState {
   /** Tabs (by id) in which keyboard input goes to every pane ("type in all panes"). */
   broadcast: Record<string, boolean>;
   toggleBroadcast: (tabId: string) => void;
+  /** Session shown over the whole app (no menus, title bar or tabs), null = normal layout. */
+  fullscreenSessionId: string | null;
+  setFullscreen: (id: string | null) => void;
 }
 
 export const useWorkspace = create<WorkspaceState>((set) => ({
@@ -34,9 +37,11 @@ export const useWorkspace = create<WorkspaceState>((set) => ({
     set((s) => {
       const sessions = { ...s.sessions };
       delete sessions[id];
-      return { sessions };
+      return { sessions, fullscreenSessionId: s.fullscreenSessionId === id ? null : s.fullscreenSessionId };
     }),
   replaceLayout: (layout) => set({ layout }),
   broadcast: {},
   toggleBroadcast: (tabId) => set((s) => ({ broadcast: { ...s.broadcast, [tabId]: !s.broadcast[tabId] } })),
+  fullscreenSessionId: null,
+  setFullscreen: (id) => set({ fullscreenSessionId: id }),
 }));

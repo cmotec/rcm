@@ -8,13 +8,18 @@ import { Modal } from './common/Modal';
 /** Per-user settings, stored with the other preferences on the server. */
 export function ProfileDialog({ me, onClose }: { me: Me | undefined; onClose: () => void }) {
   const [layout, setLayout] = useState<string | null>(null);
+  const [commandAsCtrl, setCommandAsCtrl] = useState(true);
 
   useEffect(() => {
-    void loadPreferences().then((p) => setLayout(typeof p.keyboard_layout === 'string' ? p.keyboard_layout : ''));
+    void loadPreferences().then((p) => {
+      setLayout(typeof p.keyboard_layout === 'string' ? p.keyboard_layout : '');
+      setCommandAsCtrl(p.mac_command_as_ctrl !== false);
+    });
   }, []);
 
   const save = async () => {
     await savePreference('keyboard_layout', layout || null);
+    await savePreference('mac_command_as_ctrl', commandAsCtrl);
     dialogs.toast('Profile saved. The keyboard layout applies to RDP sessions opened from now on.', 'success');
     onClose();
   };
@@ -34,6 +39,11 @@ export function ProfileDialog({ me, onClose }: { me: Me | undefined; onClose: ()
         </select>
         <small className="muted">Choose the layout set on the remote computers, normally the one you type with. A layout set
           on a connection overrides it.</small>
+      </label>
+      <label className="check">
+        <input type="checkbox" checked={commandAsCtrl} onChange={(e) => setCommandAsCtrl(e.target.checked)} />
+        <span>Mac: Command key acts as Ctrl in remote desktops</span>
+        <small className="muted">⌘C / ⌘V / ⌘A copy, paste and select all in Windows. Turn off to send ⌘ as the Windows key.</small>
       </label>
     </Modal>
   );

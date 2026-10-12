@@ -30,7 +30,7 @@ from app.security.ratelimit import limiter
 from app.services import audit
 from app.services.app_settings import get_runtime
 from app.services.authz import Perm
-from app.services.resolution import AuthOverride
+from app.services.resolution import AuthOverride, EffectiveConnection
 from app.services.sessions import guacd_params
 from app.services.sessions.files.base import Transfer, clean_path
 from app.services.sessions.files.opener import open_fs
@@ -46,6 +46,19 @@ router = APIRouter(prefix="/sessions", tags=["sessions"])
 
 class CredentialsRequired(AppError):
     status, code, title = 428, "credentials_required", "Credentials required"
+
+
+def _ask_before_connecting(eff: EffectiveConnection) -> None:
+    """Questions for the user, raised before DNS lookups and jump-host preparation."""
+    if eff.credential_choice_required:
+        raise CredentialChoiceRequired("choose the credential to connect with")
+    if eff.prompt_required:
+        protocol = eff.connection.protocol
+        raise CredentialsRequired(
+            "this connection asks for credentials when it is opened",
+            extra={"fields": ["username", "password"] + (["domain"] if protocol == "rdp" else []),
+                   "username": eff.value("username"), "domain": eff.value("domain")},
+        )
 
 
 class CredentialChoiceRequired(AppError):
@@ -119,7 +132,8 @@ async def create_session(body: SessionCreate, request: Request, principal: Princ
         runtime = await get_runtime(db, settings)
         launch, eff = await build_launch(db, body.connection_id, settings=settings, runtime=runtime,
                                          box=get_box(), interactive=interactive,
-                                         chosen_credential_id=body.credential_id, auth_override=override)
+                                         chosen_credential_id=body.credential_id, auth_override=override,
+                                         precheck=_ask_before_connecting)
         if eff.credential_choice_required:
             raise CredentialChoiceRequired("choose the credential to connect with")
         if launch.protocol == "rdp" and not launch.settings.server_layout:

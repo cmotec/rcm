@@ -1,5 +1,5 @@
 import { ShieldAlert, TriangleAlert } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useCredentials } from '../../api/hooks';
 import { type DialogRequest, type InteractiveCredentials, useDialogStore } from '../../state/dialogs';
 import { Modal } from './Modal';
@@ -211,17 +211,23 @@ function OpenWithDialog({ req }: { req: Extract<DialogRequest, { kind: 'open-wit
   );
 }
 
+/** Taps right after the menu opened belong to the gesture that opened it (touch long press). */
+const MENU_ARM_MS = 400;
+
 function ContextMenu() {
   const menu = useDialogStore((s) => s.menu);
+  const openedAt = useRef(0);
   useEffect(() => {
     if (!menu) return;
+    openedAt.current = Date.now();
     const close = () => useDialogStore.setState({ menu: null });
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && close();
-    window.addEventListener('mousedown', close);
+    const onPointer = () => Date.now() - openedAt.current >= MENU_ARM_MS && close();
+    window.addEventListener('mousedown', onPointer);
     window.addEventListener('blur', close);
     window.addEventListener('keydown', onKey);
     return () => {
-      window.removeEventListener('mousedown', close);
+      window.removeEventListener('mousedown', onPointer);
       window.removeEventListener('blur', close);
       window.removeEventListener('keydown', onKey);
     };
@@ -236,7 +242,7 @@ function ContextMenu() {
         item.separator ? <li key={i} className="sep" role="separator" /> : (
           <li key={i} role="menuitem" className={`${item.danger ? 'danger' : ''} ${item.disabled ? 'disabled' : ''}`}
               onClick={() => {
-                if (item.disabled) return;
+                if (item.disabled || Date.now() - openedAt.current < MENU_ARM_MS) return;
                 useDialogStore.setState({ menu: null });
                 item.action?.();
               }}>
