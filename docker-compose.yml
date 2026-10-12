@@ -1,0 +1,105 @@
+# Core deployment: web (nginx + SPA), api (Python), guacd.
+# PostgreSQL is EXTERNAL and configured through .env (DB_*). See docs/deployment.md.
+#
+#   cp .env.example .env   # fill in the mandatory values
+#   docker compose up -d --build
+#
+# Optional overlays:
+#   docker-compose.tls.yml       TLS termination in the web container
+#   docker-compose.postgres.yml  throw-away PostgreSQL for evaluation only
+
+x-hardening: &hardening
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  restart: unless-stopped
+  logging:
+    driver: json-file
+    options:
+      max-size: "20m"
+      max-file: "5"
+
+services:
+  web:
+    <<: *hardening
+    build: ./frontend
+    image: ${IMAGE_PREFIX:-local}/connections-web:${IMAGE_TAG:-latest}
+    # Built from this repository, never pulled (the image name is only a local tag).
+    # Docker Compose and Arcane both honour this; without it Arcane's default policy tries a registry pull.
+    pull_policy: build
+    read_only: true
+    # tmpfs mounts are root-owned by default; nginx runs as uid 101 and must write the rendered
+    # config (conf.d), its pid file and temp files (/tmp), so make them writable explicitly.
+    tmpfs:
+      - /tmp:mode=1777
+      - /var/cache/nginx:mode=1777
+      - /etc/nginx/conf.d:mode=1777
+    environment:
+      API_UPSTREAM: api:8000
+      CLIENT_MAX_BODY_SIZE: ${CLIENT_MAX_BODY_SIZE:-0}
+    ports:
+      - "${HTTP_BIND:-0.0.0.0}:${HTTP_PORT:-8080}:8080"
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - app
+
+  api:
+    <<: *hardening
+    build: ./backend
+    image: ${IMAGE_PREFIX:-local}/connections-api:${IMAGE_TAG:-latest}
+    pull_policy: build
+    read_only: true
+    tmpfs:
+      - /tmp:mode=1777
+    # Optional so platforms that inject variables themselves (Arcane, Portainer, CI) work without a .env file.
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      GUACD_HOST: guacd
+      GUACD_PORT: "4822"
+      # Only the web container talks to the API; trust its X-Forwarded-For.
+      FORWARDED_ALLOW_IPS: "*"
+    # Exactly one replica: live sessions are held in this process (docs/limitations-and-risks.md).
+    deploy:
+      replicas: 1
+    stop_grace_period: 30s
+    depends_on:
+      guacd:
+        condition: service_healthy
+    networks:
+      - app
+      - gateway
+
+  guacd:
+    <<: *hardening
+    # Upstream guacd 1.6.0 plus /drives and /recordings owned by its user, so the named volumes are
+    # created writable for guacd (see guacd/Dockerfile) without a root init container.
+    build: ./guacd
+    image: ${IMAGE_PREFIX:-local}/connections-guacd:${IMAGE_TAG:-latest}
+    pull_policy: build
+    # No published ports: guacd is reachable only from the api container (network "gateway").
+    volumes:
+      - drives:/drives
+      - recordings:/recordings
+      # Optional: CA bundle (system CAs + your internal CA) for RDP certificate validation, see docs/deployment.md
+      # - ./certs/ca-bundle.crt:/etc/ssl/certs/ca-certificates.crt:ro
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 4822 || (echo > /dev/tcp/127.0.0.1/4822) 2>/dev/null"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - gateway
+
+networks:
+  app: {}
+  gateway: {}
+
+volumes:
+  drives: {}
+  recordings: {}

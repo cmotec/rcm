@@ -1,0 +1,31 @@
+# secrets & local configuration
+.env
+.env.*
+!.env.example
+# anchored to the repo root: an unanchored "secrets/" would also hide backend/app/services/secrets/
+/certs/
+/secrets/
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+build/
+
+# node
+node_modules/
+frontend/dist/
+*.log
+
+# editors / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# e2e artefacts
+e2e/shots/
