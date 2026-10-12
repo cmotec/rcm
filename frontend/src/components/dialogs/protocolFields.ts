@@ -1,4 +1,5 @@
 import type { Protocol } from '../../api/types';
+import { KEYBOARD_LAYOUTS } from '../../sessions/keyboardLayouts';
 
 export interface FieldSpec {
   key: string;
@@ -96,10 +97,7 @@ export const PROTOCOL_FIELDS: Record<Protocol, FieldSpec[]> = {
     { key: 'enable_printing', label: 'Printer redirection (PDF)', type: 'bool', group: 'Clipboard & devices' },
     { key: 'console', label: 'Connect to console / admin session', type: 'bool', group: 'Session' },
     { key: 'server_layout', label: 'Keyboard layout', type: 'select', group: 'Session', options: [
-      { value: '', label: 'Automatic (en-us)' }, { value: 'en-us-qwerty', label: 'English (US)' }, { value: 'en-gb-qwerty', label: 'English (UK)' },
-      { value: 'de-de-qwertz', label: 'German' }, { value: 'de-ch-qwertz', label: 'Swiss German' }, { value: 'fr-fr-azerty', label: 'French' },
-      { value: 'fr-ch-qwertz', label: 'Swiss French' }, { value: 'it-it-qwerty', label: 'Italian' }, { value: 'es-es-qwerty', label: 'Spanish' },
-      { value: 'sv-se-qwerty', label: 'Swedish' }, { value: 'ja-jp-qwerty', label: 'Japanese' }, { value: 'failsafe', label: 'Unicode fail-safe' }] },
+      { value: '', label: "User's profile setting (else English US)" }, ...KEYBOARD_LAYOUTS] },
     { key: 'timezone', label: 'Time zone', type: 'text', group: 'Session', placeholder: 'browser time zone' },
     { key: 'initial_program', label: 'Initial program', type: 'text', group: 'Session' },
     { key: 'remote_app', label: 'RemoteApp program', type: 'text', group: 'Session', placeholder: '||notepad' },

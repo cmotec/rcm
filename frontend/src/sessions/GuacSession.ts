@@ -36,6 +36,10 @@ export class GuacSession extends BaseSession implements SpecialKeyTarget {
   private localCursor = false;
   private lastLocalClipboard = '';
   remoteClipboard = '';
+  /** Remote clipboard text the browser has not accepted yet (written on the next user gesture). */
+  private pendingLocalCopy: string | null = null;
+  /** Ctrl/⌘+V held back until the browser hands over the local clipboard (see holdPaste). */
+  private heldPaste: { keysym: number; queued: [0 | 1, number][]; timer: number; refocus: boolean } | null = null;
   transfers: FileTransfer[] = [];
   private transferListeners = new Set<() => void>();
   private pendingTicket: string | null;
@@ -69,6 +73,59 @@ export class GuacSession extends BaseSession implements SpecialKeyTarget {
       Array.from(e.dataTransfer.files).forEach((f) => this.uploadFile(f));
     });
     this.element.addEventListener('paste', (e) => this.onPaste(e));
+    // Copied on the remote while the browser refused the write (no focus / no user gesture yet):
+    // retry on the next click, key press or when the window gets the focus back.
+    this.element.addEventListener('pointerdown', this.retryCopy, true);
+    this.element.addEventListener('keydown', this.retryCopy, true);
+    window.addEventListener('focus', this.retryCopy);
+  }
+
+  private readonly retryCopy = () => {
+    if (this.pendingLocalCopy !== null) this.writeLocalClipboard(this.pendingLocalCopy);
+  };
+
+  override dispose(): void {
+    window.removeEventListener('focus', this.retryCopy);
+    if (this.heldPaste) window.clearTimeout(this.heldPaste.timer);
+    this.heldPaste = null;
+    super.dispose();
+  }
+
+  /** Remote → local clipboard. */
+  private writeLocalClipboard(text: string): void {
+    if (!navigator.clipboard?.writeText) return; // only in secure contexts (HTTPS)
+    this.pendingLocalCopy = text;
+    navigator.clipboard.writeText(text).then(
+      () => {
+        if (this.pendingLocalCopy === text) this.pendingLocalCopy = null;
+      },
+      () => undefined,
+    );
+  }
+
+  /** Ctrl/⌘+V pressed: move the focus to a text field so the browser fires its paste event there. */
+  private holdPaste(keysym: number): void {
+    const refocus = document.activeElement !== this.keyInput;
+    this.keyInput.value = '';
+    this.keyInput.focus({ preventScroll: true });
+    // No paste event (empty clipboard, permission denied, …): send the keys anyway.
+    const timer = window.setTimeout(() => this.releasePaste(true), 400);
+    this.heldPaste = { keysym, queued: [], timer, refocus };
+  }
+
+  /** Send the held Ctrl+V (unless dropped) and the keys typed in the meantime, in order. */
+  private releasePaste(sendKey: boolean): void {
+    const held = this.heldPaste;
+    if (!held) return;
+    this.heldPaste = null;
+    window.clearTimeout(held.timer);
+    if (held.refocus && document.activeElement === this.keyInput) this.element.focus({ preventScroll: true });
+    this.keyInput.value = '';
+    if (sendKey) this.keyEvent(1, held.keysym);
+    for (const [pressed, keysym] of held.queued) {
+      if (keysym === held.keysym && !sendKey) continue;
+      this.keyEvent(pressed, keysym);
+    }
   }
 
   /**
@@ -78,10 +135,14 @@ export class GuacSession extends BaseSession implements SpecialKeyTarget {
    */
   private onPaste(e: ClipboardEvent): void {
     const data = e.clipboardData;
-    if (!data) return;
+    e.preventDefault(); // never into the hidden text field
+    if (!data) {
+      this.releasePaste(true);
+      return;
+    }
     const files = Array.from(data.files ?? []);
     if (files.length) {
-      e.preventDefault();
+      this.releasePaste(false); // files go to the drive, not to the remote clipboard
       if (!this.uploadsAllowed) {
         dialogs.toast(this.settings.drive_enabled
           ? 'Uploads are disabled for this connection.'
@@ -94,7 +155,16 @@ export class GuacSession extends BaseSession implements SpecialKeyTarget {
       return;
     }
     const text = data.getData('text/plain');
-    if (text && text !== this.lastLocalClipboard && text !== this.remoteClipboard) this.sendClipboard(text);
+    if (text && !this.settings.disable_paste && text !== this.lastLocalClipboard && text !== this.remoteClipboard) {
+      this.sendClipboard(text);
+      // let guacd announce the new clipboard to the remote before Ctrl+V asks for it
+      if (this.heldPaste) {
+        window.clearTimeout(this.heldPaste.timer);
+        this.heldPaste.timer = window.setTimeout(() => this.releasePaste(true), 120);
+      }
+      return;
+    }
+    this.releasePaste(true);
   }
 
   private get settings() {
@@ -186,14 +256,26 @@ export class GuacSession extends BaseSession implements SpecialKeyTarget {
       };
       const keyboard = new Guacamole.Keyboard(this.element);
       keyboard.onkeydown = (keysym) => {
+        if (this.heldPaste) {
+          if (keysym !== this.heldPaste.keysym) this.heldPaste.queued.push([1, keysym]);
+          return false;
+        }
+        const pasteShortcut = (keysym === 0x76 || keysym === 0x56) && (keyboard.modifiers.ctrl || keyboard.modifiers.meta);
+        if (pasteShortcut && (!this.settings.disable_paste || this.uploadsAllowed)) {
+          // Hold the V back and let the browser paste (onPaste): the local clipboard reaches the
+          // remote first, then Ctrl+V pastes it there. Returning true keeps the browser's paste action.
+          this.holdPaste(keysym);
+          return true;
+        }
         client.sendKeyEvent(1, keysym);
         this.mirrorKey(1, keysym);
-        // Ctrl/⌘+V: also let the browser fire its paste event, so pasted files can be uploaded
-        // (see onPaste). Returning true keeps the browser's default action for this key.
-        const pasteShortcut = (keysym === 0x76 || keysym === 0x56) && (keyboard.modifiers.ctrl || keyboard.modifiers.meta);
-        return pasteShortcut;
+        return false;
       };
       keyboard.onkeyup = (keysym) => {
+        if (this.heldPaste) {
+          this.heldPaste.queued.push([0, keysym]);
+          return;
+        }
         client.sendKeyEvent(0, keysym);
         this.mirrorKey(0, keysym);
         // a key typed on the soft keyboard releases modifiers latched on the touch key bar
@@ -213,7 +295,7 @@ export class GuacSession extends BaseSession implements SpecialKeyTarget {
       reader.ontext = (t) => (text += t);
       reader.onend = () => {
         this.remoteClipboard = text;
-        navigator.clipboard?.writeText(text).catch(() => undefined);
+        this.writeLocalClipboard(text);
       };
     };
 
