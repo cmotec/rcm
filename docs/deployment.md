@@ -28,6 +28,16 @@ deployment. `docker-compose.postgres.yml` exists for evaluation only.
 * An OIDC client in Authentik (see §4) or a local recovery admin.
 * A DNS name and TLS certificate (either your own reverse proxy, or the TLS overlay).
 
+### Docker management UIs (Arcane, Portainer, …)
+
+`web` and `api` are built from this repository and are not published to a registry. Their image
+names (`local/connections-*`) are only local tags. Both services set `pull_policy: build`, so
+Compose-compatible tools build them instead of trying a registry pull. Arcane, for example,
+otherwise applies its *Default Deploy Pull Policy* (`missing`), which pulls and fails. The tool
+needs the whole repository as build context, so use a Git-synced project rather than pasting only
+the compose file. `.env` is optional: set the variables from `.env.example` in the tool's
+environment editor instead.
+
 ## 3. First start
 
 ```bash

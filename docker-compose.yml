@@ -25,6 +25,9 @@ services:
     <<: *hardening
     build: ./frontend
     image: ${IMAGE_PREFIX:-local}/connections-web:${IMAGE_TAG:-latest}
+    # Built from this repository, never pulled (the image name is only a local tag).
+    # Docker Compose and Arcane both honour this; without it Arcane's default policy tries a registry pull.
+    pull_policy: build
     read_only: true
     tmpfs:
       - /tmp
@@ -45,10 +48,14 @@ services:
     <<: *hardening
     build: ./backend
     image: ${IMAGE_PREFIX:-local}/connections-api:${IMAGE_TAG:-latest}
+    pull_policy: build
     read_only: true
     tmpfs:
       - /tmp
-    env_file: .env
+    # Optional so platforms that inject variables themselves (Arcane, Portainer, CI) work without a .env file.
+    env_file:
+      - path: .env
+        required: false
     environment:
       GUACD_HOST: guacd
       GUACD_PORT: "4822"
