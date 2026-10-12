@@ -101,7 +101,7 @@ export class TerminalSession extends BaseSession {
     ws.onclose = (ev) => {
       if (this.ws !== ws || this.userClosed) return;
       this.ws = null;
-      if (exited) this.setStatus('disconnected', 'Remote shell exited');
+      if (exited) this.ended('Remote shell exited');
       else if (this.snapshot.status === 'error') return;
       else if (ev.code === 1008) this.setStatus('disconnected', 'Session ticket rejected');
       else this.scheduleReconnect(fatal ?? 'Connection lost');

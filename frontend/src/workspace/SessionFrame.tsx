@@ -60,7 +60,7 @@ function StatusOverlay({ sessionId }: { sessionId: string }) {
         {(s.status === 'disconnected' || s.status === 'error') && (
           <div className="overlay-actions">
             <button className="primary" onClick={() => void ctrl?.reconnect(true)}><RotateCw size={14} /> Reconnect</button>
-            <button onClick={() => void closeSessionById(sessionId, false)}>Close</button>
+            <button onClick={() => void closeSessionById(sessionId)}>Close</button>
           </div>
         )}
       </div>

@@ -101,6 +101,7 @@ export async function openConnection(conn: ConnectionRef, target: OpenTarget = {
   if (!info) return null;
   const ctrl = createController(info);
   controllers.set(info.id, ctrl);
+  ctrl.onEnded = () => void closeSessionById(info!.id);
   useWorkspace.getState().addSession(
     {
       id: info.id,
@@ -122,18 +123,9 @@ export async function openConnection(conn: ConnectionRef, target: OpenTarget = {
 }
 
 /** Close a session (server side too) and remove it from the layout. */
-export async function closeSessionById(id: string, confirm = true): Promise<void> {
-  const meta = useWorkspace.getState().sessions[id];
+/** Close a session window: terminates the remote session without asking (closing is intentional). */
+export async function closeSessionById(id: string): Promise<void> {
   const ctrl = controllers.get(id);
-  if (confirm && ctrl && ctrl.state.status === 'connected' && meta?.kind !== 'files') {
-    const ok = await dialogs.confirm({
-      title: 'Close session',
-      message: `Disconnect "${meta?.name ?? 'session'}"? The remote connection will be terminated.`,
-      confirmLabel: 'Disconnect',
-      danger: true,
-    });
-    if (!ok) return;
-  }
   controllers.delete(id);
   useWorkspace.getState().update((l) => closeInLayout(l, id));
   useWorkspace.getState().forgetSession(id);
@@ -150,7 +142,7 @@ export async function disconnectAll(): Promise<void> {
     danger: true,
   });
   if (!ok) return;
-  for (const id of ids) await closeSessionById(id, false);
+  for (const id of ids) await closeSessionById(id);
   await post('/api/v1/sessions/disconnect-all').catch(() => undefined);
 }
 

@@ -22,6 +22,8 @@ export abstract class BaseSession {
   protected snapshot: SessionSnapshot = { status: 'connecting', message: null, detail: null };
   private listeners = new Set<Listener>();
   protected userClosed = false;
+  /** Called when the remote side ended the session normally (e.g. `exit`, logoff); the registry closes the window. */
+  onEnded: ((reason: string) => void) | null = null;
   protected reconnectAttempts = 0;
   private reconnectTimer: number | null = null;
   private resizeObserver: ResizeObserver;
@@ -116,6 +118,14 @@ export abstract class BaseSession {
     this.reconnectAttempts += 1;
     this.setStatus('reconnecting', `${reason} — retrying in ${Math.round(delay / 1000)} s`);
     this.reconnectTimer = window.setTimeout(() => void this.reconnect(false), delay);
+  }
+
+  /** The remote side ended the session normally: no reconnect, the window closes. */
+  protected ended(reason: string): void {
+    if (this.userClosed) return;
+    this.userClosed = true;
+    this.setStatus('closed', reason);
+    this.onEnded?.(reason);
   }
 
   protected connectionEstablished(): void {

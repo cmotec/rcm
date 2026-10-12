@@ -43,7 +43,7 @@ function TabButton({ tab, index, active }: { tab: Tab; index: number; active: bo
   const first = sessions[ids[0]];
   const title = ids.map((id) => sessions[id]?.name ?? '…').join(' | ');
   const close = async () => {
-    for (const id of ids) await closeSessionById(id, ids.length === 1);
+    for (const id of ids) await closeSessionById(id);
   };
   return (
     <div className={`tab ${active ? 'active' : ''}`} role="tab" aria-selected={active}

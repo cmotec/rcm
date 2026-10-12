@@ -6,7 +6,9 @@ import Guacamole from './guac';
 import type { GuacTypes } from './guac';
 
 // Guacamole status codes after which reconnecting cannot help.
-const FATAL_CODES = new Set([0x0300, 0x0301, 0x0303, 0x020b, 0x0209]);
+const FATAL_CODES = new Set([0x0300, 0x0301, 0x0303, 0x0209]);
+// The remote side ended the session normally (logoff / disconnect): close the window.
+const ENDED_CODES = new Set([0x0000, 0x020b]);
 const RESIZE_DEBOUNCE_MS = 200;
 
 export interface FileTransfer {
@@ -178,7 +180,9 @@ export class GuacSession extends BaseSession {
       } else if (state === 5 && !this.tearingDown && !this.userClosed) {
         const err = this.lastError;
         const message = err?.message || 'Disconnected';
-        if (err && FATAL_CODES.has(err.code)) this.setStatus('error', message);
+        // No error = guacd closed the session cleanly; network drops always report a tunnel error.
+        if (!err || ENDED_CODES.has(err.code)) this.ended(message);
+        else if (err && FATAL_CODES.has(err.code)) this.setStatus('error', message);
         else this.scheduleReconnect(message);
       }
     };
