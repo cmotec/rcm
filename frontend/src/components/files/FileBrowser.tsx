@@ -258,6 +258,21 @@ export function FileBrowser({ session }: { session: FileSession }) {
     await act(() => post(`${base}/rename`, { source: entry.path, target: target.startsWith('/') ? target : join(path, target) }));
   };
 
+  /** Run an operation for each item; keep going on failures and report them together. */
+  const forEach = async (list: FileEntry[], op: (e: FileEntry) => Promise<unknown>, verb: string) => {
+    const failures: string[] = [];
+    for (const e of list) {
+      try {
+        await op(e);
+      } catch (err) {
+        failures.push(`${e.name}: ${errorMessage(err)}`);
+      }
+    }
+    setSelected(new Set());
+    if (path) await load(path);
+    if (failures.length) setError(`Could not ${verb} ${failures.length} item(s): ${failures.join('; ')}`);
+  };
+
   const remove = async (list: FileEntry[]) => {
     if (!list.length) return;
     const dirs = list.some((e) => e.type === 'dir');
@@ -268,9 +283,26 @@ export function FileBrowser({ session }: { session: FileSession }) {
       danger: true,
     });
     if (!ok) return;
-    await act(async () => {
-      for (const e of list) await post(`${base}/delete`, { path: e.path, recursive: e.type === 'dir' });
+    await forEach(list, (e) => post(`${base}/delete`, { path: e.path, recursive: e.type === 'dir' }), 'delete');
+  };
+
+  const moveTo = async (list: FileEntry[]) => {
+    if (!list.length || !path) return;
+    const target = await dialogs.prompt({
+      title: `Move ${list.length === 1 ? list[0].name : `${list.length} items`}`,
+      label: 'Target directory (absolute, or relative to the current one)',
+      initial: path,
     });
+    if (!target) return;
+    const dir = target.startsWith('/') ? target : join(path, target);
+    if (dir === path) return;
+    await forEach(list, (e) => post(`${base}/rename`, { source: e.path, target: join(dir, e.name) }), 'move');
+  };
+
+  const downloadAll = (list: FileEntry[]) => {
+    const files = list.filter((e) => e.type === 'file');
+    if (files.length < list.length) dialogs.toast('Folders are skipped — download their files individually', 'info');
+    files.forEach((e) => void download(e));
   };
 
   const chmod = async (entry: FileEntry) => {
@@ -282,13 +314,53 @@ export function FileBrowser({ session }: { session: FileSession }) {
     await act(() => post(`${base}/chmod`, { path: entry.path, mode }));
   };
 
-  const toggleSelect = (e: FileEntry, ev: React.MouseEvent) => {
+  // ------------------------------------------------------------------ selection
+
+  const [anchor, setAnchor] = useState<string | null>(null);
+
+  /** Click: select one. Ctrl/⌘-click: toggle. Shift-click: range from the last clicked row. */
+  const onRowClick = (e: FileEntry, ev: React.MouseEvent) => {
+    const order = visible.map((x) => x.path);
+    if (ev.shiftKey && anchor && order.includes(anchor)) {
+      const [a, b] = [order.indexOf(anchor), order.indexOf(e.path)].sort((x, y) => x - y);
+      const range = order.slice(a, b + 1);
+      setSelected((s) => new Set(ev.ctrlKey || ev.metaKey ? [...s, ...range] : range));
+      return;
+    }
+    if (ev.ctrlKey || ev.metaKey) toggleOne(e.path);
+    else setSelected(new Set([e.path]));
+    setAnchor(e.path);
+  };
+
+  /** Checkbox / Ctrl-click: add or remove one row, keep the rest. */
+  const toggleOne = (p: string) => {
     setSelected((s) => {
-      const next = new Set(ev.ctrlKey || ev.metaKey ? s : []);
-      if (next.has(e.path) && (ev.ctrlKey || ev.metaKey)) next.delete(e.path);
-      else next.add(e.path);
+      const next = new Set(s);
+      if (next.has(p)) next.delete(p);
+      else next.add(p);
       return next;
     });
+    setAnchor(p);
+  };
+
+  const allSelected = visible.length > 0 && visible.every((e) => selected.has(e.path));
+  const someSelected = selectedEntries.length > 0 && !allSelected;
+  const selectAll = (on: boolean) => setSelected(new Set(on ? visible.map((e) => e.path) : []));
+
+  const onKeyDown = (ev: React.KeyboardEvent) => {
+    if ((ev.target as HTMLElement).tagName === 'INPUT') return;
+    if (ev.key.toLowerCase() === 'a' && (ev.ctrlKey || ev.metaKey)) {
+      ev.preventDefault();
+      selectAll(true);
+    } else if (ev.key === 'Escape') {
+      setSelected(new Set());
+    } else if (ev.key === 'Delete' && selectedEntries.length) {
+      ev.preventDefault();
+      void remove(selectedEntries);
+    } else if (ev.key === 'Enter' && selectedEntries.length === 1) {
+      const e = selectedEntries[0];
+      void (e.type === 'dir' ? load(e.path) : download(e));
+    }
   };
 
   const sortBy = (key: SortKey) => setSort((s) => ({ key, asc: s.key === key ? !s.asc : true }));
@@ -296,7 +368,7 @@ export function FileBrowser({ session }: { session: FileSession }) {
   const unencrypted = session.info.protocol === 'ftp';
 
   return (
-    <div className="fb" onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+    <div className="fb" tabIndex={0} onKeyDown={onKeyDown} onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
          onDragLeave={() => setDragOver(false)} onDrop={onDrop}>
       <div className="fb-toolbar">
         <button className="icon-btn" title="Parent directory" disabled={!path || path === '/'}
@@ -313,7 +385,7 @@ export function FileBrowser({ session }: { session: FileSession }) {
         <button className="icon-btn" title="New folder" onClick={mkdir}><FolderPlus size={16} /></button>
         <button className="icon-btn" title="Upload files" onClick={() => fileInput.current?.click()}><Upload size={16} /></button>
         <button className="icon-btn" title="Download selected" disabled={!selectedEntries.some((e) => e.type === 'file')}
-                onClick={() => selectedEntries.filter((e) => e.type === 'file').forEach((e) => void download(e))}>
+                onClick={() => downloadAll(selectedEntries)}>
           <Download size={16} />
         </button>
         <button className="icon-btn" title="Rename" disabled={selectedEntries.length !== 1}
@@ -346,6 +418,11 @@ export function FileBrowser({ session }: { session: FileSession }) {
         <table className="fb-table">
           <thead>
             <tr>
+              <th className="check-col">
+                <input type="checkbox" aria-label="Select all" checked={allSelected}
+                       ref={(el) => { if (el) el.indeterminate = someSelected; }}
+                       onChange={(ev) => selectAll(ev.target.checked)} />
+              </th>
               <th onClick={() => sortBy('name')}>Name</th>
               <th className="num" onClick={() => sortBy('size')}>Size</th>
               <th onClick={() => sortBy('modified')}>Modified</th>
@@ -356,12 +433,25 @@ export function FileBrowser({ session }: { session: FileSession }) {
           <tbody>
             {visible.map((e) => (
               <tr key={e.path} className={selected.has(e.path) ? 'selected' : ''}
-                  onClick={(ev) => toggleSelect(e, ev)}
+                  onClick={(ev) => onRowClick(e, ev)}
                   onDoubleClick={() => (e.type === 'dir' ? load(e.path) : download(e))}
                   draggable={e.type === 'file'}
                   onContextMenu={(ev) => {
                     ev.preventDefault();
+                    if (selected.has(e.path) && selectedEntries.length > 1) {
+                      const list = selectedEntries;
+                      dialogs.contextMenu(ev.clientX, ev.clientY, [
+                        { label: `Download ${list.filter((x) => x.type === 'file').length} file(s)`,
+                          disabled: !list.some((x) => x.type === 'file'), action: () => downloadAll(list) },
+                        { label: `Move ${list.length} items to…`, action: () => void moveTo(list) },
+                        { label: `Delete ${list.length} items`, danger: true, action: () => void remove(list) },
+                        { separator: true, label: '' },
+                        { label: 'Clear selection', action: () => setSelected(new Set()) },
+                      ]);
+                      return;
+                    }
                     setSelected(new Set([e.path]));
+                    setAnchor(e.path);
                     dialogs.contextMenu(ev.clientX, ev.clientY, [
                       ...(e.type === 'dir' ? [{ label: 'Open', action: () => void load(e.path) }]
                         : [{ label: 'Download', action: () => void download(e) }]),
@@ -370,6 +460,10 @@ export function FileBrowser({ session }: { session: FileSession }) {
                       { label: 'Delete', danger: true, action: () => void remove([e]) },
                     ]);
                   }}>
+                <td className="check-col" onClick={(ev) => ev.stopPropagation()} onDoubleClick={(ev) => ev.stopPropagation()}>
+                  <input type="checkbox" aria-label={`Select ${e.name}`} checked={selected.has(e.path)}
+                         onChange={() => toggleOne(e.path)} />
+                </td>
                 <td className="name">
                   {e.type === 'dir' ? <Folder size={15} className="folder-icon" /> : e.type === 'link'
                     ? <Link2 size={15} /> : <FileIcon size={15} />}
@@ -383,11 +477,21 @@ export function FileBrowser({ session }: { session: FileSession }) {
               </tr>
             ))}
             {!visible.length && !loading && (
-              <tr><td colSpan={5} className="muted center">Empty directory — drop files here to upload</td></tr>
+              <tr><td colSpan={6} className="muted center">Empty directory — drop files here to upload</td></tr>
             )}
           </tbody>
         </table>
       </div>
+      {selectedEntries.length > 1 && (
+        <div className="fb-selection-bar">
+          <span>{selectedEntries.length} selected</span>
+          <button disabled={!selectedEntries.some((e) => e.type === 'file')} onClick={() => downloadAll(selectedEntries)}>
+            <Download size={14} /> Download</button>
+          <button onClick={() => void moveTo(selectedEntries)}>Move to…</button>
+          <button className="danger" onClick={() => void remove(selectedEntries)}><Trash size={14} /> Delete</button>
+          <button onClick={() => setSelected(new Set())}>Clear</button>
+        </div>
+      )}
       {transfers.length > 0 && (
         <div className="fb-transfers">
           <div className="fb-transfers-head">

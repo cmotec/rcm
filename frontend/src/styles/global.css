@@ -422,7 +422,8 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; user-sel
   .admin-nav button { white-space: nowrap; }
   .grid { display: block; overflow-x: auto; }
 
-  .fb-table th:nth-child(4), .fb-table td:nth-child(4), .fb-table th:nth-child(5), .fb-table td:nth-child(5) { display: none; }
+  .fb-table th:nth-child(5), .fb-table td:nth-child(5), .fb-table th:nth-child(6), .fb-table td:nth-child(6) { display: none; }
+  .fb-table .check-col input { width: 20px; height: 20px; }
   .fb-toolbar { flex-wrap: wrap; }
   .fb-path { flex-basis: 100%; order: 10; }
   .transfer progress { width: 70px; }
@@ -442,3 +443,11 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; user-sel
 /* zoomed remote desktop: scrollable, anchored top-left (the view follows the pointer) */
 .guac-display-host.zoomed { overflow: auto; justify-content: flex-start; align-items: flex-start; }
 .tree-row { -webkit-touch-callout: none; -webkit-user-select: none; }
+
+/* --- file manager multi-select -------------------------------------------------------- */
+.fb { outline: none; }
+.fb-table .check-col { width: 28px; padding-right: 0; text-align: center; }
+.fb-table .check-col input { margin: 0; vertical-align: middle; }
+.fb-selection-bar { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 6px 8px;
+  border-top: 1px solid var(--border); background: var(--accent-soft); }
+.fb-selection-bar span { flex: 1; font-weight: 500; }
