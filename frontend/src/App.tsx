@@ -100,19 +100,20 @@ function Shell({ config }: { config: AuthConfig }) {
   // Subscribe/unsubscribe symmetrically (StrictMode runs effects twice in development).
   useEffect(() => startLayoutPersistence(), []);
 
-  // Sessions start fullscreen: hide the left menu and the details panel when a session opens,
-  // show them again once all sessions are closed. The toolbar toggles still work in between.
+  // When a session opens, the details panel hides (all screen sizes) and, on phones only, the left
+  // menu too (fullscreen session). Both return once all sessions are closed. On desktop the left
+  // menu stays as the user set it. The toolbar toggles still work in between.
   const prevSessionCount = useRef(sessionCount);
   useEffect(() => {
     if (sessionCount > prevSessionCount.current) {
       setShowDetails(false);
-      setSidebarOpen(false);
+      if (isMobile) setSidebarOpen(false);
     } else if (sessionCount === 0 && prevSessionCount.current > 0) {
       setShowDetails(true);
-      setSidebarOpen(true);
+      if (isMobile) setSidebarOpen(true);
     }
     prevSessionCount.current = sessionCount;
-  }, [sessionCount]);
+  }, [sessionCount, isMobile]);
 
   const goToWorkspace = () => {
     setView('workspace');

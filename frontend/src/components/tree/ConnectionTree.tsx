@@ -1,4 +1,4 @@
-import { Check, ChevronDown, ChevronRight, FolderPlus, Plus, Search, ShieldAlert, SlidersHorizontal, Star, X } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight, FolderPlus, Plus, Search, SlidersHorizontal, Star, X } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { del, errorMessage, patch, post, put } from '../../api/client';
 import { hasPerm, useInvalidate, useMe, useTree } from '../../api/hooks';
@@ -339,9 +339,6 @@ export function ConnectionTree({ actions, tapToOpen = false }: { actions: TreeAc
               <ProtocolIcon protocol={n.conn.protocol} />
               {renderLabel(n.conn)}
               <span className="spacer" />
-              {n.conn.warnings.length > 0 && (
-                <span title={n.conn.warnings.map((w) => w.message).join('\n')}><ShieldAlert size={12} className="warn-icon" /></span>
-              )}
               {n.conn.favorite && <Star size={11} className="fav-icon" />}
             </>
           )}
