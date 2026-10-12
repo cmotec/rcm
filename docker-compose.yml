@@ -29,10 +29,12 @@ services:
     # Docker Compose and Arcane both honour this; without it Arcane's default policy tries a registry pull.
     pull_policy: build
     read_only: true
+    # tmpfs mounts are root-owned by default; nginx runs as uid 101 and must write the rendered
+    # config (conf.d), its pid file and temp files (/tmp), so make them writable explicitly.
     tmpfs:
-      - /tmp
-      - /var/cache/nginx
-      - /etc/nginx/conf.d
+      - /tmp:mode=1777
+      - /var/cache/nginx:mode=1777
+      - /etc/nginx/conf.d:mode=1777
     environment:
       API_UPSTREAM: api:8000
       CLIENT_MAX_BODY_SIZE: ${CLIENT_MAX_BODY_SIZE:-0}
@@ -51,7 +53,7 @@ services:
     pull_policy: build
     read_only: true
     tmpfs:
-      - /tmp
+      - /tmp:mode=1777
     # Optional so platforms that inject variables themselves (Arcane, Portainer, CI) work without a .env file.
     env_file:
       - path: .env
