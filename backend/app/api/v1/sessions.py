@@ -30,6 +30,7 @@ from app.security.ratelimit import limiter
 from app.services import audit
 from app.services.app_settings import get_runtime
 from app.services.authz import Perm
+from app.services.resolution import AuthOverride
 from app.services.sessions import guacd_params
 from app.services.sessions.files.base import Transfer, clean_path
 from app.services.sessions.files.opener import open_fs
@@ -87,11 +88,25 @@ async def create_session(body: SessionCreate, request: Request, principal: Princ
                                     resource_type="connection", resource_id=body.connection_id, outcome="denied")
         raise Forbidden("'connect' permission required")
     manager.check_capacity(principal.id)
-    if body.credential_id is not None:
+    override: AuthOverride | None = None
+    if body.auth_override is not None:
+        o = body.auth_override
+        if o.mode == "credential":
+            if not o.credential_id:
+                raise ValidationFailed("auth_override mode 'credential' requires credential_id")
+            override = AuthOverride(credential_id=o.credential_id)
+        else:
+            values = o.credentials.model_dump(exclude_none=True) if o.credentials else {}
+            if not values:
+                raise ValidationFailed("auth_override mode 'own' requires credentials")
+            override = AuthOverride(values=values)
+    for cred_id in (body.credential_id, override.credential_id if override else None):
+        if cred_id is None:
+            continue
         # the user may only pick credentials they are allowed to use
-        if not access.can("credential", body.credential_id, "view"):
+        if not access.can("credential", cred_id, "view"):
             raise NotFound("credential not found")
-        if not access.can("credential", body.credential_id, "connect"):
+        if not access.can("credential", cred_id, "connect"):
             raise Forbidden("you may not use this credential ('connect' permission required)")
     interactive = body.credentials.model_dump(exclude_none=True) if body.credentials else None
     decision = HostKeyDecision(
@@ -104,7 +119,7 @@ async def create_session(body: SessionCreate, request: Request, principal: Princ
         runtime = await get_runtime(db, settings)
         launch, eff = await build_launch(db, body.connection_id, settings=settings, runtime=runtime,
                                          box=get_box(), interactive=interactive,
-                                         chosen_credential_id=body.credential_id)
+                                         chosen_credential_id=body.credential_id, auth_override=override)
         if eff.credential_choice_required:
             raise CredentialChoiceRequired("choose the credential to connect with")
         if eff.prompt_required:
@@ -154,6 +169,8 @@ async def create_session(body: SessionCreate, request: Request, principal: Princ
         details={"session_id": str(session.id), "protocol": launch.protocol, "host": launch.host,
                  "port": launch.port, "auth_sources": {k: v["kind"] for k, v in launch.auth_sources.items()},
                  "chosen_credential_id": str(body.credential_id) if body.credential_id else None,
+                 "auth_override": body.auth_override.mode if body.auth_override else None,
+                 "override_credential_id": str(override.credential_id) if override and override.credential_id else None,
                  "warnings": [w["code"] for w in launch.warnings]},
     )
     return _out(session, ticket)

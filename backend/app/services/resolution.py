@@ -47,6 +47,15 @@ def default_port(protocol: str, settings: dict[str, Any] | None = None) -> int |
 
 
 @dataclass(frozen=True)
+class AuthOverride:
+    """"Open with different credentials": replaces the connection's configured authentication for
+    one session. Either typed values (``values``, never stored) or a credential-store entry."""
+
+    values: dict[str, str] | None = None
+    credential_id: uuid.UUID | None = None
+
+
+@dataclass(frozen=True)
 class Source:
     kind: str  # connection | credential | interactive | folder | environment | default
     id: str | None = None
@@ -293,14 +302,16 @@ async def resolve_connection(
     env_search_domains: list[str],
     interactive: dict[str, str] | None = None,
     chosen_credential_id: uuid.UUID | None = None,
+    auth_override: AuthOverride | None = None,
 ) -> EffectiveConnection:
     chain = await load_connection_chain(db, connection_id)
     credentials: dict[uuid.UUID, list[m.Credential]] = {}
     for conn in chain:
         if conn.auth_mode == "credential" and conn.credential_id and conn.credential_id not in credentials:
             credentials[conn.credential_id] = await load_credential_chain(db, conn.credential_id)
-    if chosen_credential_id and chosen_credential_id not in credentials:
-        credentials[chosen_credential_id] = await load_credential_chain(db, chosen_credential_id)
+    for extra in (chosen_credential_id, auth_override.credential_id if auth_override else None):
+        if extra and extra not in credentials:
+            credentials[extra] = await load_credential_chain(db, extra)
     top = chain[-1]
     folders = await load_folder_chain(db, top.folder_id)
     return compute_effective(
@@ -312,6 +323,7 @@ async def resolve_connection(
         env_search_domains=env_search_domains,
         interactive=interactive,
         chosen_credential_id=chosen_credential_id,
+        auth_override=auth_override,
     )
 
 
@@ -325,6 +337,7 @@ def compute_effective(
     env_search_domains: list[str],
     interactive: dict[str, str] | None = None,
     chosen_credential_id: uuid.UUID | None = None,
+    auth_override: AuthOverride | None = None,
 ) -> EffectiveConnection:
     conn = chain[0]
 
@@ -378,6 +391,18 @@ def compute_effective(
                 auth[k] = r
         if not c.inherit_auth:
             break
+
+    if auth_override is not None:
+        # Different credentials for this session only: nothing from the configured authentication is
+        # mixed in (no stored password next to a typed username), and nothing is prompted.
+        if auth_override.credential_id:
+            auth = credential_values(credentials.get(auth_override.credential_id, []), box,
+                                     include_secrets=include_secrets)
+        else:
+            src = Source("interactive", str(conn.id), "entered at launch")
+            auth = {k: Resolved(v, src) for k, v in (auth_override.values or {}).items() if k in AUTH_FIELDS and v}
+        interactive_conn = None
+        choice_conn = None
 
     return EffectiveConnection(
         connection=conn,

@@ -45,6 +45,16 @@ function TabButton({ tab, index, active }: { tab: Tab; index: number; active: bo
   const first = sessions[ids[0]];
   const title = ids.map((id) => sessions[id]?.name ?? '…').join(' | ');
   const close = async () => {
+    // A single session closes immediately; a tab holding several sessions asks first.
+    if (ids.length > 1) {
+      const ok = await dialogs.confirm({
+        title: 'Close tab',
+        message: `This tab contains ${ids.length} sessions (${title}). Disconnect all of them?`,
+        confirmLabel: `Disconnect ${ids.length}`,
+        danger: true,
+      });
+      if (!ok) return;
+    }
     for (const id of ids) await closeSessionById(id);
   };
   return (

@@ -1,6 +1,6 @@
 import { ApiError, errorMessage, get, post, put } from '../api/client';
 import type { HostKeyInfo, Protocol, SessionInfo } from '../api/types';
-import { dialogs, type InteractiveCredentials } from '../state/dialogs';
+import { type AuthOverride, dialogs, type InteractiveCredentials } from '../state/dialogs';
 import { useWorkspace } from '../state/workspace';
 import {
   type Edge,
@@ -48,6 +48,8 @@ function createController(info: SessionInfo): BaseSession {
 export interface OpenTarget {
   floating?: Rect;
   splitWith?: { sessionId: string; edge: Edge };
+  /** Different credentials for this session only (replaces the configured authentication). */
+  authOverride?: AuthOverride;
 }
 
 interface ConnectionRef {
@@ -72,6 +74,7 @@ export async function openConnection(conn: ConnectionRef, target: OpenTarget = {
         credentials,
         credential_id: credentialId,
         accept_host_keys: accepted,
+        auth_override: target.authOverride,
       });
     } catch (err) {
       if (err instanceof ApiError && err.code === 'credential_choice_required') {

@@ -67,27 +67,28 @@ export function ConnectionTree({ actions, tapToOpen = false }: { actions: TreeAc
   const [selection, setSelection] = useState<Set<string>>(new Set());
   const [anchor, setAnchor] = useState<string | null>(null);
 
-  // Touch: long press (600 ms) edits the connection / folder.
+  // Touch: long press (600 ms) opens the same menu as a right click, at the finger.
   const longPress = useRef<{ timer: number | null; fired: boolean }>({ timer: null, fired: false });
   const cancelLongPress = () => {
     if (longPress.current.timer !== null) window.clearTimeout(longPress.current.timer);
     longPress.current.timer = null;
   };
-  const startLongPress = (n: TreeNode) => {
+  const startLongPress = (e: React.TouchEvent, showMenu: (x: number, y: number) => void) => {
     cancelLongPress();
     longPress.current.fired = false;
+    const { clientX, clientY } = e.touches[0];
     longPress.current.timer = window.setTimeout(() => {
       longPress.current.fired = true;
       navigator.vibrate?.(15);
-      const perm = n.type === 'folder' ? n.folder.permission : n.conn.permission;
-      if (!['edit', 'manage'].includes(perm ?? '')) {
-        dialogs.toast('You are not allowed to edit this entry', 'warning');
-      } else if (n.type === 'folder') {
-        actions.editFolder(n.folder);
-      } else {
-        actions.editConnection(n.conn);
-      }
+      showMenu(clientX, clientY);
     }, 600);
+  };
+
+  /** "Open with different credentials…": typed credentials or another credential-store entry, this session only. */
+  const openWith = async (c: Connection) => {
+    const name = label(c).primary;
+    const override = await dialogs.openWith(name, c.protocol);
+    if (override) void openConnection({ ...c, name }, { authOverride: override });
   };
 
   const nodes = useMemo(() => (tree ? filterTree(buildTree(tree), query) : []), [tree, query]);
@@ -286,10 +287,13 @@ export function ConnectionTree({ actions, tapToOpen = false }: { actions: TreeAc
     const onContext = (e: React.MouseEvent) => {
       e.preventDefault();
       e.stopPropagation();
-      if (tapToOpen) return; // touch: long press edits instead (see startLongPress)
+      // touch devices: the long-press timer opens the menu (the browser's own long-press event is ignored)
+      if (!tapToOpen) showMenu(e.clientX, e.clientY);
+    };
+    const showMenu = (x: number, y: number) => {
       const key = keyOf(n);
       if (selection.has(key) && selection.size > 1) {
-        dialogs.contextMenu(e.clientX, e.clientY, [
+        dialogs.contextMenu(x, y, [
           { label: `Delete ${selection.size} selected items…`, danger: true, action: () => void deleteMany([...selection]) },
           { label: 'Clear selection', action: () => setSelection(new Set()) },
         ]);
@@ -298,7 +302,7 @@ export function ConnectionTree({ actions, tapToOpen = false }: { actions: TreeAc
       setSelection(new Set([key]));
       setAnchor(key);
       if (n.type === 'folder') {
-        dialogs.contextMenu(e.clientX, e.clientY, [
+        dialogs.contextMenu(x, y, [
           { label: 'New connection here', disabled: !editable || !canCreateConn, action: () => actions.newConnection({ folderId: n.id }) },
           { label: 'New sub-folder', disabled: !editable || !canCreateFolder, action: () => actions.newFolder(n.id) },
           { separator: true, label: '' },
@@ -311,9 +315,10 @@ export function ConnectionTree({ actions, tapToOpen = false }: { actions: TreeAc
         const c = n.conn;
         const launchable = c.protocol !== 'host';
         const canConnect = ['connect', 'edit', 'manage'].includes(c.permission ?? '');
-        dialogs.contextMenu(e.clientX, e.clientY, [
+        dialogs.contextMenu(x, y, [
           ...(launchable ? [
             { label: 'Open', disabled: !canConnect, action: () => open(c) },
+            { label: 'Open with different credentials…', disabled: !canConnect, action: () => void openWith(c) },
             { label: 'Open in floating window', disabled: !canConnect, action: () => open(c, 'float') },
             { label: 'Open in split view', disabled: !canConnect || !focusedSession, action: () => open(c, 'split') },
             { separator: true, label: '' },
@@ -350,7 +355,7 @@ export function ConnectionTree({ actions, tapToOpen = false }: { actions: TreeAc
           onDragLeave={() => setDropId((d) => (d === n.id ? null : d))}
           onDrop={(e) => void onDropOn(e, n)}
           onClick={(e) => onRowClick(e, n)}
-          onTouchStart={() => startLongPress(n)}
+          onTouchStart={(e) => startLongPress(e, showMenu)}
           onTouchMove={cancelLongPress}
           onTouchEnd={cancelLongPress}
           onTouchCancel={cancelLongPress}

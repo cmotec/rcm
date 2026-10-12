@@ -140,6 +140,77 @@ function ChooseCredentialDialog({ req }: { req: Extract<DialogRequest, { kind: '
   );
 }
 
+function OpenWithDialog({ req }: { req: Extract<DialogRequest, { kind: 'open-with' }> }) {
+  const { data } = useCredentials();
+  const usable = (data?.items ?? []).filter((c) => ['connect', 'edit', 'manage'].includes(c.permission ?? ''));
+  const [mode, setMode] = useState<'own' | 'credential'>('own');
+  const [v, setV] = useState<InteractiveCredentials>({ username: '', password: '', domain: '' });
+  const [credId, setCredId] = useState<string | null>(null);
+  const showDomain = req.protocol === 'rdp';
+  const valid = mode === 'own' ? Boolean(v.username || v.password) : Boolean(credId);
+  const submit = () => {
+    if (!valid) return;
+    if (mode === 'credential') {
+      req.resolve({ mode: 'credential', credential_id: credId! });
+      return;
+    }
+    const credentials: InteractiveCredentials = {};
+    if (v.username) credentials.username = v.username;
+    if (v.password) credentials.password = v.password;
+    if (v.domain) credentials.domain = v.domain;
+    req.resolve({ mode: 'own', credentials });
+  };
+  return (
+    <Modal title={`Open ${req.connectionName} with different credentials`} onClose={() => req.resolve(null)} width={480}
+           footer={<>
+             <button onClick={() => req.resolve(null)}>Cancel</button>
+             <button className="primary" disabled={!valid} onClick={submit}>Connect</button>
+           </>}>
+      <p className="muted">Used for this session only, instead of the connection's configured login.</p>
+      <div className="radio-cards two">
+        <label className={`radio-card ${mode === 'own' ? 'active' : ''}`}>
+          <input type="radio" name="open-with" checked={mode === 'own'} onChange={() => setMode('own')} />
+          <b>Enter credentials</b><small>Typed now, not stored.</small>
+        </label>
+        <label className={`radio-card ${mode === 'credential' ? 'active' : ''}`}>
+          <input type="radio" name="open-with" checked={mode === 'credential'} onChange={() => setMode('credential')} />
+          <b>Credential store</b><small>Any entry you are allowed to use.</small>
+        </label>
+      </div>
+      {mode === 'own' ? (
+        <form onSubmit={(e) => { e.preventDefault(); submit(); }} autoComplete="off">
+          <label className="field"><span>Username</span>
+            <input value={v.username} onChange={(e) => setV({ ...v, username: e.target.value })} autoFocus />
+          </label>
+          <label className="field"><span>Password</span>
+            <input type="password" value={v.password} onChange={(e) => setV({ ...v, password: e.target.value })}
+                   autoComplete="new-password" />
+          </label>
+          {showDomain && (
+            <label className="field"><span>Domain</span>
+              <input value={v.domain} onChange={(e) => setV({ ...v, domain: e.target.value })} />
+            </label>
+          )}
+          <button type="submit" hidden />
+        </form>
+      ) : (
+        <>
+          {!usable.length && <p className="banner warn">You have no credentials you are allowed to use.</p>}
+          <ul className="choice-list" role="listbox">
+            {usable.map((c) => (
+              <li key={c.id} role="option" aria-selected={credId === c.id} className={credId === c.id ? 'active' : ''}
+                  onClick={() => setCredId(c.id)} onDoubleClick={() => req.resolve({ mode: 'credential', credential_id: c.id })}>
+                <b>{c.name}</b>
+                <span className="muted">{c.domain ? `${c.domain}\\` : ''}{c.username ?? ''}</span>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+    </Modal>
+  );
+}
+
 function ContextMenu() {
   const menu = useDialogStore((s) => s.menu);
   useEffect(() => {
@@ -200,6 +271,7 @@ export function DialogHost() {
       {req?.kind === 'credentials' && <CredentialsDialog key={req.id} req={req} />}
       {req?.kind === 'hostkey' && <HostKeyDialog key={req.id} req={req} />}
       {req?.kind === 'choose-credential' && <ChooseCredentialDialog key={req.id} req={req} />}
+      {req?.kind === 'open-with' && <OpenWithDialog key={req.id} req={req} />}
       <ContextMenu />
       <Toasts />
     </>

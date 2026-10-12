@@ -403,12 +403,21 @@ class AcceptedHostKey(Strict):
     fingerprint: str = Field(min_length=10, max_length=128)
 
 
+class AuthOverrideIn(Strict):
+    """Open with different credentials (this session only)."""
+
+    mode: Literal["own", "credential"]
+    credentials: InteractiveCredentials | None = Field(None, description="mode 'own': typed values, never stored")
+    credential_id: uuid.UUID | None = Field(None, description="mode 'credential': a credential the user may use")
+
+
 class SessionCreate(Strict):
     connection_id: uuid.UUID
     credentials: InteractiveCredentials | None = None
     credential_id: uuid.UUID | None = Field(
         None, description="credential chosen at connect time (connections in credential mode without a pinned credential)")
     accept_host_keys: list[AcceptedHostKey] = Field(default_factory=list, max_length=4)
+    auth_override: AuthOverrideIn | None = None
 
 
 class SessionOut(BaseModel):

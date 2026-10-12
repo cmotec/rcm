@@ -24,7 +24,13 @@ export type DialogRequest =
   | { id: number; kind: 'credentials'; connectionName: string; protocol: Protocol; fields: string[];
       username?: string | null; domain?: string | null; resolve: (v: InteractiveCredentials | null) => void }
   | { id: number; kind: 'hostkey'; info: HostKeyInfo; changed: boolean; resolve: (accept: boolean) => void }
-  | { id: number; kind: 'choose-credential'; connectionName: string; resolve: (credentialId: string | null) => void };
+  | { id: number; kind: 'choose-credential'; connectionName: string; resolve: (credentialId: string | null) => void }
+  | { id: number; kind: 'open-with'; connectionName: string; protocol: Protocol; resolve: (o: AuthOverride | null) => void };
+
+/** "Open with different credentials" (one session only). */
+export type AuthOverride =
+  | { mode: 'own'; credentials: InteractiveCredentials }
+  | { mode: 'credential'; credential_id: string };
 
 export interface Toast {
   id: number;
@@ -68,6 +74,8 @@ export const dialogs = {
     domain?: string | null }) => enqueue<InteractiveCredentials | null>({ kind: 'credentials', ...o }),
   hostKey: (info: HostKeyInfo, changed: boolean) => enqueue<boolean>({ kind: 'hostkey', info, changed }),
   chooseCredential: (connectionName: string) => enqueue<string | null>({ kind: 'choose-credential', connectionName }),
+  openWith: (connectionName: string, protocol: Protocol) =>
+    enqueue<AuthOverride | null>({ kind: 'open-with', connectionName, protocol }),
   contextMenu: (x: number, y: number, items: MenuItem[]) => useDialogStore.setState({ menu: { x, y, items } }),
   closeMenu: () => useDialogStore.setState({ menu: null }),
   toast: (message: string, kind: Toast['kind'] = 'info') => {

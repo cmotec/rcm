@@ -19,7 +19,7 @@ from app.schemas.protocol_settings import parse_settings, security_warnings
 from app.security.crypto import SecretBox
 from app.services.app_settings import RuntimeSettings
 from app.services.dns import apply_search_domains
-from app.services.resolution import LAUNCHABLE, EffectiveConnection, resolve_connection
+from app.services.resolution import LAUNCHABLE, AuthOverride, EffectiveConnection, resolve_connection
 
 
 @dataclass
@@ -64,6 +64,7 @@ async def build_launch(
     box: SecretBox,
     interactive: dict[str, str] | None = None,
     chosen_credential_id: uuid.UUID | None = None,
+    auth_override: AuthOverride | None = None,
     _depth: int = 0,
 ) -> tuple[LaunchConfig, EffectiveConnection]:
     if _depth > 3:
@@ -76,6 +77,7 @@ async def build_launch(
         env_search_domains=settings.search_domains,
         interactive=interactive,
         chosen_credential_id=chosen_credential_id,
+        auth_override=auth_override,
     )
     conn = eff.connection
     if conn.protocol not in LAUNCHABLE:

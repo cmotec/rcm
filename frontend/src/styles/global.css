@@ -451,3 +451,5 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; user-sel
 .fb-selection-bar { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 6px 8px;
   border-top: 1px solid var(--border); background: var(--accent-soft); }
 .fb-selection-bar span { flex: 1; font-weight: 500; }
+
+.radio-cards.two { grid-template-columns: 1fr 1fr; }
