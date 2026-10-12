@@ -43,9 +43,8 @@ environment editor instead.
 ```bash
 cp .env.example .env
 # generate the encryption key (store a copy in your password manager / KMS!)
-docker compose build api
-docker compose run --rm --no-deps api python -m app.cli generate-key
-#   → put it into .env as ENCRYPTION_KEYS=k1:<key> and ENCRYPTION_ACTIVE_KEY_ID=k1
+echo "ENCRYPTION_KEYS=k1:$(openssl rand -base64 32)"
+#   → put that line into .env together with ENCRYPTION_ACTIVE_KEY_ID=k1
 $EDITOR .env          # APP_URL, DB_*, OIDC_*, …
 docker compose run --rm --no-deps api python -m app.cli check-config
 docker compose up -d --build

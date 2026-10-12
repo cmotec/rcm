@@ -37,8 +37,7 @@ all in the browser.
 
 ```bash
 cp .env.example .env                        # set APP_URL, DB_*, OIDC_* (see comments)
-docker compose build api
-docker compose run --rm --no-deps api python -m app.cli generate-key   # → ENCRYPTION_KEYS
+echo "ENCRYPTION_KEYS=k1:$(openssl rand -base64 32)"   # → add to .env
 docker compose up -d --build
 ```
 

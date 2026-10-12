@@ -2,8 +2,9 @@
 .env
 .env.*
 !.env.example
-certs/
-secrets/
+# anchored to the repo root: an unanchored "secrets/" would also hide backend/app/services/secrets/
+/certs/
+/secrets/
 
 # python
 __pycache__/
