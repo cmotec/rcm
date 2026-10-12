@@ -43,8 +43,32 @@ CHUNK = 256 * 1024
 _SENTINEL = object()
 
 
+UNWRAP_TIMEOUT_SECONDS = 3.0
+
+
+def _tolerant_unwrap(conn: ssl.SSLSocket) -> None:
+    """Don't hang on servers that never answer the TLS close_notify of a data connection.
+
+    ftplib calls ``conn.unwrap()`` after every LIST/RETR/STOR and blocks until the server answers.
+    Some embedded servers (e.g. Bambu Lab printers) never do, so every listing and transfer would
+    wait for the full timeout. Give the server a moment, then drop the TLS layer; the transfer itself
+    is already complete and the server confirms it on the control channel.
+    """
+    original = conn.unwrap
+
+    def unwrap() -> socket.socket:
+        try:
+            conn.settimeout(UNWRAP_TIMEOUT_SECONDS)
+            return original()
+        except (OSError, ValueError):
+            return conn
+
+    conn.unwrap = unwrap  # type: ignore[method-assign]
+
+
 class _ReuseSessionMixin:
-    """Reuse the control channel's TLS session on data channels (vsftpd require_ssl_reuse, FileZilla)."""
+    """Reuse the control channel's TLS session on data channels (vsftpd require_ssl_reuse, FileZilla,
+    Bambu Lab printers) and tolerate servers that skip the TLS shutdown."""
 
     def ntransfercmd(self, cmd: str, rest: Any = None) -> tuple[socket.socket, int | None]:  # type: ignore[override]
         conn, size = ftplib.FTP.ntransfercmd(self, cmd, rest)  # type: ignore[arg-type]
@@ -52,6 +76,7 @@ class _ReuseSessionMixin:
             conn = self.context.wrap_socket(  # type: ignore[attr-defined]
                 conn, server_hostname=self.host, session=self.sock.session  # type: ignore[attr-defined]
             )
+            _tolerant_unwrap(conn)
         return conn, size
 
 
@@ -170,6 +195,13 @@ def _map_error(exc: Exception, path: str) -> Exception:
         if msg.startswith(("550", "450")):
             return FileNotFound(f"{path}: {msg}")
         return FileOpError(f"{path}: {msg}")
+    if isinstance(exc, ssl.SSLCertVerificationError):
+        return FileOpError(
+            f"The server's TLS certificate is not trusted ({exc.verify_message}). Devices such as printers or "
+            "NAS appliances usually use self-signed certificates: set 'Certificate validation' to "
+            "'Do not validate' in the connection's protocol settings, or add the CA via TLS_CA_BUNDLE.",
+            code="tls_untrusted",
+        )
     if isinstance(exc, ssl.SSLError):
         return FileOpError(f"TLS error: {exc}", code="tls_error")
     if isinstance(exc, (OSError, EOFError, ftplib.Error)):
@@ -208,7 +240,16 @@ class FtpFS(RemoteFS):
             else:
                 ftp = ftplib.FTP(timeout=timeout, encoding=encoding)
             ftp.trust_server_pasv_ipv4_address = trust_pasv_address
-            ftp.connect(host, port, timeout=timeout)
+            try:
+                ftp.connect(host, port, timeout=timeout)
+            except TimeoutError as exc:
+                if tls != "implicit" and port == 990:
+                    raise FileOpError(
+                        "No FTP greeting from port 990. That port normally uses implicit TLS: choose "
+                        "protocol FTPS with TLS mode 'Implicit' in the connection settings.",
+                        code="tls_mode_mismatch",
+                    ) from exc
+                raise
             if tls == "explicit":
                 ftp.auth()  # type: ignore[attr-defined]
             ftp.login(username or "anonymous", password or "")
