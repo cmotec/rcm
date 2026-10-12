@@ -104,6 +104,9 @@ class AccessContext:
     permissions: set[str]
     cap: int
     read_only_token: bool = False
+    # Signage account: no global permissions, "connect" on exactly this connection, nothing else.
+    signage: bool = False
+    signage_connection_id: uuid.UUID | None = None
     _acl: dict[tuple[str, uuid.UUID], int] | None = None
     _folders: dict[uuid.UUID, _Node] | None = None
     _connections: dict[uuid.UUID, _Node] | None = None
@@ -113,9 +116,11 @@ class AccessContext:
     # ------------------------------------------------------------------ global
     @property
     def is_admin(self) -> bool:
-        return Perm.ALL.value in self.permissions
+        return not self.signage and Perm.ALL.value in self.permissions
 
     def has(self, perm: Perm | str) -> bool:
+        if self.signage:
+            return False
         if self.read_only_token and perm not in (Perm.API_ACCESS, Perm.AUDIT_READ):
             return False
         return self.is_admin or str(perm) in self.permissions
@@ -235,6 +240,9 @@ class AccessContext:
     def level_of(self, rtype: str, rid: uuid.UUID | None) -> int:
         if self._acl is None:
             raise RuntimeError("AccessContext.load() must be awaited first")
+        if self.signage:  # roles and ACLs do not apply: the assignment is the only grant
+            hit = rtype == "connection" and rid is not None and rid == self.signage_connection_id
+            return LEVELS["connect"] if hit else LEVELS["none"]
         if self.is_admin:
             lvl = LEVELS["manage"]
         elif rid is None or rid == ROOT_ID:
@@ -327,6 +335,8 @@ async def build_access_context(
         permissions=perms,
         cap=cap,
         read_only_token=read_only_token,
+        signage=bool(user.is_signage),
+        signage_connection_id=user.signage_connection_id if user.is_signage else None,
     )
 
 

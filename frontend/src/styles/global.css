@@ -453,3 +453,9 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; user-sel
 .fb-selection-bar span { flex: 1; font-weight: 500; }
 
 .radio-cards.two { grid-template-columns: 1fr 1fr; }
+
+/* Signage account: one remote screen, nothing else */
+.signage { position: fixed; inset: 0; display: flex; background: #000; color: #ddd; }
+.signage-slot { flex: 1; display: flex; min-width: 0; min-height: 0; }
+.signage-notice { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; gap: 10px;
+  padding: 16px; text-align: center; font-size: 15px; background: rgba(0, 0, 0, 0.75); pointer-events: none; }

@@ -39,6 +39,9 @@ export interface Me {
   csrf_token: string | null;
   auth_method: string;
   session_expires_at: string | null;
+  /** Signage account: only this connection, fullscreen, no menus (null = none assigned yet). */
+  signage?: boolean;
+  signage_connection_id?: string | null;
 }
 
 export interface Folder {
@@ -236,6 +239,8 @@ export interface User {
   created_at: string;
   roles: string[];
   groups: string[];
+  is_signage?: boolean;
+  signage_connection_id?: string | null;
 }
 
 export interface AuditEvent {

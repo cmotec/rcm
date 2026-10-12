@@ -93,6 +93,12 @@ class User(TimestampMixin, Base):
     is_local: Mapped[bool] = mapped_column(Boolean, default=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     last_login_at: Mapped[datetime | None]
+    # Signage account: may only open this one connection, sees it fullscreen and nothing else.
+    # Kept as a separate flag so deleting the connection never turns the account into a normal user.
+    is_signage: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    signage_connection_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("connections.id", ondelete="SET NULL")
+    )
 
 
 class Role(TimestampMixin, Base):

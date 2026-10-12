@@ -49,6 +49,16 @@ inherit down folders and parent connections, capped per role. Revealing a secret
 Using a credential or jump host in a connection requires *connect* on it. Opening a connection does
 not expose the credential to the user.
 
+**Signage accounts.** An administrator can mark an account as a signage display and assign one
+RDP or VNC connection (Administration → Users). The server then ignores the account's roles and
+ACLs. It has no global permissions (no API tokens, no administration), *connect* on exactly the
+assigned connection, and nothing else, so it cannot choose or override credentials. The connection
+therefore needs stored credentials. The UI shows only that connection, fullscreen, starts it after
+login, and opens a new session whenever it ends. Its login lasts `SIGNAGE_SESSION_MAX_DAYS`
+(default 30) without idle timeout, because the display never calls the API while it only shows a
+screen. Deactivate the account (or change its password) to end the display's login. Deleting the
+assigned connection leaves the account a signage account with nothing to show.
+
 **guacd hardening.** guacd is unreachable from clients. The api performs the handshake and
 forwards only an allow-list of client opcodes (`key`, `mouse`, `size`, `clipboard`, …). Any
 other opcode (`select`, `connect`, …) closes the tunnel. Uploads to the RDP drive are dropped when the

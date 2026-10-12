@@ -48,7 +48,8 @@ async def create_web_session(
         user_id=user.id,
         csrf_token=secrets.token_urlsafe(32),
         auth_method=method,
-        expires_at=now() + timedelta(hours=settings.AUTH_SESSION_MAX_HOURS),
+        expires_at=now() + (timedelta(days=settings.SIGNAGE_SESSION_MAX_DAYS) if user.is_signage
+                            else timedelta(hours=settings.AUTH_SESSION_MAX_HOURS)),
         last_seen_at=now(),
         ip=ip,
         user_agent=(user_agent or "")[:512] or None,
@@ -99,12 +100,13 @@ async def lookup_web_session(
     if rec is None:
         return None
     t = now()
-    idle_limit = rec.last_seen_at + timedelta(minutes=settings.AUTH_SESSION_IDLE_MINUTES)
-    if rec.expires_at <= t or idle_limit <= t:
-        await db.delete(rec)
-        return None
     user = await db.get(m.User, rec.user_id)
     if user is None or not user.is_active:
+        await db.delete(rec)
+        return None
+    # A signage display shows a remote screen for days without calling the API: no idle timeout.
+    idle_limit = rec.last_seen_at + timedelta(minutes=settings.AUTH_SESSION_IDLE_MINUTES)
+    if rec.expires_at <= t or (idle_limit <= t and not user.is_signage):
         await db.delete(rec)
         return None
     # sliding idle expiry; write at most once a minute

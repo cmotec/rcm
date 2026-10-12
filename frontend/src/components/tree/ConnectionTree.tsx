@@ -91,8 +91,19 @@ export function ConnectionTree({ actions, tapToOpen = false }: { actions: TreeAc
     if (override) void openConnection({ ...c, name }, { authOverride: override });
   };
 
-  const nodes = useMemo(() => (tree ? filterTree(buildTree(tree), query) : []), [tree, query]);
-  const favorites = useMemo(() => tree?.connections.filter((c) => c.favorite) ?? [], [tree]);
+  const nodes = useMemo(() => {
+    if (!tree) return [];
+    const sortKey = (c: Connection) => {
+      const l = connectionLabel(c, prefs);
+      return l.secondary ? `${l.primary} (${l.secondary})` : l.primary;
+    };
+    return filterTree(buildTree(tree, sortKey), query);
+  }, [tree, query, prefs]);
+  const favorites = useMemo(() => {
+    const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+    return (tree?.connections.filter((c) => c.favorite) ?? [])
+      .sort((a, b) => collator.compare(connectionLabel(a, prefs).primary, connectionLabel(b, prefs).primary));
+  }, [tree, prefs]);
 
   // Rows in display order (for Shift+click ranges and Ctrl+A).
   const visibleOrder = useMemo(() => {

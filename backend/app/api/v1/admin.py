@@ -66,6 +66,27 @@ async def _set_manual_roles(db: AsyncSession, user: m.User, names: list[str]) ->
     await db.flush()
 
 
+SIGNAGE_PROTOCOLS = ("rdp", "vnc")
+
+
+async def _set_signage(db: AsyncSession, principal: Principal, user: m.User, enabled: bool,
+                       connection_id: uuid.UUID | None) -> bool:
+    """Apply the signage assignment; returns True if it changed."""
+    if enabled:
+        if user.id == principal.id:
+            raise ValidationFailed("you cannot turn your own account into a signage account")
+        if connection_id is not None:
+            conn = await db.get(m.Connection, connection_id)
+            if conn is None:
+                raise ValidationFailed("signage connection not found")
+            if conn.protocol not in SIGNAGE_PROTOCOLS:
+                raise ValidationFailed("a signage connection must be an RDP or VNC connection")
+    new_conn = connection_id if enabled else None
+    changed = user.is_signage != enabled or user.signage_connection_id != new_conn
+    user.is_signage, user.signage_connection_id = enabled, new_conn
+    return changed
+
+
 @router.get("/users", response_model=Page[UserOut], summary="List users")
 async def list_users(q: str | None = Query(None, max_length=200), p: Paging = Depends(paging),
                      principal: Principal = Depends(require(Perm.USERS_MANAGE)), db: AsyncSession = Depends(get_db, scope="function")):
@@ -103,9 +124,12 @@ async def create_user(body: UserCreate, principal: Principal = Depends(require(P
     db.add(user)
     await db.flush()
     await _set_manual_roles(db, user, body.roles)
+    await _set_signage(db, principal, user, body.is_signage, body.signage_connection_id)
     await audit.record(db, "user.create", actor_id=principal.id, actor_name=principal.name, resource_type="user",
                        resource_id=user.id, details={"username": user.username, "roles": body.roles,
-                                                     "local": user.is_local})
+                                                     "local": user.is_local, "signage": user.is_signage,
+                                                     "signage_connection_id": str(user.signage_connection_id)
+                                                     if user.signage_connection_id else None})
     await db.refresh(user)
     return await _user_out(db, user)
 
@@ -145,6 +169,12 @@ async def update_user(user_id: uuid.UUID, body: UserUpdate, principal: Principal
         if user.id == principal.id and "admin" not in body.roles and principal.access.is_admin:
             raise ValidationFailed("you cannot remove your own administrator role")
         await _set_manual_roles(db, user, body.roles)
+    if fields & {"is_signage", "signage_connection_id"}:
+        enabled = body.is_signage if "is_signage" in fields and body.is_signage is not None else user.is_signage
+        conn_id = body.signage_connection_id if "signage_connection_id" in fields else user.signage_connection_id
+        if await _set_signage(db, principal, user, enabled, conn_id):
+            # live sessions were opened under the previous permissions
+            await get_manager().close_all_for_user(user.id, "permissions_changed")
     await audit.record(db, "user.update", actor_id=principal.id, actor_name=principal.name, resource_type="user",
                        resource_id=user.id, details={"fields": sorted(fields - {"password"}),
                                                      "password_changed": "password" in fields})

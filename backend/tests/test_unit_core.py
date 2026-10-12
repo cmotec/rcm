@@ -165,3 +165,22 @@ def test_log_redaction() -> None:
     assert redact_value("GET /x?ticket=abc&w=1") == f"GET /x?ticket={REDACTED}&w=1"
     assert "AAAA" not in redact_value("-----BEGIN OPENSSH PRIVATE KEY-----\nAAAA\n-----END OPENSSH PRIVATE KEY-----")
     assert redact_value("Authorization: Bearer pat_abc.def") == f"Authorization: Bearer {REDACTED}"
+
+
+# --------------------------------------------------------------------------- authorisation
+
+
+def test_signage_account_only_connects_to_its_connection() -> None:
+    from app.services.authz import ROOT_ID, AccessContext, Perm
+
+    screen, other, folder = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    access = AccessContext(user_id=uuid.uuid4(), username="lobby", roles=["admin"], role_ids=set(), group_ids=set(),
+                           permissions={Perm.ALL.value}, cap=4, signage=True, signage_connection_id=screen)
+    access._acl = {("folder", ROOT_ID): 4}  # roles and ACL grants must not apply
+    access._folders, access._connections, access._credentials = {}, {}, {}
+
+    assert not access.is_admin and not access.has(Perm.API_ACCESS) and not access.has(Perm.CONNECTIONS_CREATE)
+    assert access.can("connection", screen, "connect") and not access.can("connection", screen, "edit")
+    assert not access.can("connection", other, "view")
+    assert not access.can("folder", folder, "view") and not access.can("folder", None, "view")
+    assert not access.can("credential", uuid.uuid4(), "view")

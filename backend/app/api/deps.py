@@ -117,7 +117,7 @@ async def authenticate(
         if origin and origin != settings.app_origin:
             raise Forbidden("cross-origin request rejected", code="origin_rejected")
     access = await build_access_context(db, user)
-    if not access.roles:
+    if not access.roles and not access.signage:
         raise Forbidden("no role assigned to this account", code="no_role")
     return Principal(user=user, access=access, web_session=rec)
 

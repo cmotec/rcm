@@ -22,17 +22,23 @@ and are not imported (see below).
 | `VNC`, `AppleRemoteDesktop` | VNC connection |
 | `FTP` (+ `Encryption` explicit/implicit) | FTP or FTPS connection |
 | `SFTP` | SFTP connection |
-| `SubConnections` | child connections (parent/child hierarchy) |
-| `Credential` entries | credential store entries (username/domain) |
-| `CredentialConnectionID` | `auth_mode = credential` pointing at the imported entry |
-| `Url` / `Host`, `Port` | hostname / port (`host:port` in Url is split) |
-| `Description`, `Keywords`/`Tags` | description, tags |
+| `SubConnections`, `ParentID` (e.g. an SFTP entry with `HostSourceMode=Inherited`) | child connections that inherit the parent's hostname |
+| `Credential` entries | credential store entries (username/domain); groups of type *Credentials* create no connection folder |
+| `CredentialConnectionID`, `CredentialConnectionSavedPath` (`Group\Entry`) | `auth_mode = credential` pointing at the imported entry |
+| `CredentialConnectionSavedPath` "prompt on connection" (`--- Bei Verbindung abfragen ---`, …) | choose a credential at connect time; children with the same setting as their parent inherit it |
+| `AlwaysAskForPassword` | interactive authentication (typed at connect time) |
+| `Url` / `Host`, `Port` | hostname + domain (`web01.example.org` → `web01` / `example.org`), port (`host:port` in Url is split) |
+| `Name` `host01 (Mail)` | description "Mail" (the tree shows `hostname (description)`); a name unrelated to the hostname becomes the description |
+| `Description`, `Keywords`/`Tags` | description (below the label line), tags |
+| RDP `SoundHook=DoNotPlay` | audio disabled |
 | RDP `AuthentificationLevel` | `cert_policy` (0/ConnectDontWarnMe → ignore, 2/WarnMe → tofu, 1/DontConnect → validate), reported as a warning |
 | RDP `UseCredSSP`, `Console`, `RemoteApplicationProgram`, drive redirection, gateway host | corresponding RDP settings |
 | VNC `Display`, view-only; FTP passive/active, remote directory | corresponding settings |
 
 Every other non-empty value is listed per item under **unsupported settings**, in both the
-preview and the final report. Nothing is dropped silently. Values of sensitive-looking settings
+preview and the final report. Nothing is dropped silently, except RDM client bookkeeping that has
+no meaning here: owner/resource texts, the `Security` block (offline cache, temporary access),
+proxy types without a proxy host, keyboard hook, status and app version. Values of sensitive-looking settings
 are shown as `[redacted]`. Unsupported entry types (web, VPN, documents, PowerShell, …) are
 listed and skipped.
 

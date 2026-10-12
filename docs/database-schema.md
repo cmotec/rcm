@@ -27,7 +27,7 @@ known_hosts · audit_events · session_records · app_settings · import_jobs ·
 
 | Table | Purpose | Notable columns / constraints |
 |---|---|---|
-| `users` | accounts (OIDC and local) | unique `lower(username)`; unique (`oidc_issuer`, `oidc_subject`); `password_hash` (Argon2id, local only) |
+| `users` | accounts (OIDC and local) | unique `lower(username)`; unique (`oidc_issuer`, `oidc_subject`); `password_hash` (Argon2id, local only); `is_signage` + `signage_connection_id` (FK, `SET NULL`) for signage displays |
 | `roles` | built-in (`admin`, `user`, `readonly`) and custom roles | `permissions text[]`, `resource_cap` (highest resource permission) |
 | `user_roles` | membership | `source` = manual / oidc / bootstrap (IdP-derived roles are replaced at each login) |
 | `groups`, `user_groups` | IdP groups seen at login | usable as ACL principals |

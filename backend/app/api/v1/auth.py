@@ -139,7 +139,7 @@ async def oidc_callback(
                                     details={"method": "oidc", "reason": "inactive"})
         return _login_error_redirect(settings, "inactive")
     roles = await auth_svc.sync_groups_and_roles(db, settings, user, ident.groups)
-    if not roles:
+    if not roles and not user.is_signage:
         await audit.record(db, "auth.login", actor_id=user.id, actor_name=user.username, outcome="denied",
                            details={"method": "oidc", "reason": "no_role", "groups": ident.groups[:50]})
         await db.commit()
@@ -184,7 +184,7 @@ async def local_login(
     if user.password_hash and needs_rehash(user.password_hash):
         user.password_hash = hash_password(body.password)
     access = await build_access_context(db, user)
-    if not access.roles:
+    if not access.roles and not access.signage:
         raise Forbidden("no role assigned to this account", code="no_role")
     limiter.reset("login-user", key)
     new = await auth_svc.create_web_session(db, settings, user, method="local", ip=req.ip, user_agent=req.user_agent)
@@ -234,6 +234,8 @@ async def me(principal: Principal = Depends(get_principal)) -> MeOut:
         csrf_token=ws.csrf_token if ws else None,
         auth_method=ws.auth_method if ws else "api_token",
         session_expires_at=ws.expires_at if ws else None,
+        signage=a.signage,
+        signage_connection_id=a.signage_connection_id,
     )
 
 

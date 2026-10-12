@@ -2,8 +2,8 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Plus, RefreshCw, Trash } from 'lucide-react';
 import { useState } from 'react';
 import { del, errorMessage, get, patch, post } from '../../api/client';
-import { hasPerm, useMe } from '../../api/hooks';
-import type { AuditEvent, KnownHost, Page, Role, SecretProvider, User } from '../../api/types';
+import { hasPerm, useMe, useTree } from '../../api/hooks';
+import type { AuditEvent, Connection, KnownHost, Page, Role, SecretProvider, Tree, User } from '../../api/types';
 import { dialogs } from '../../state/dialogs';
 import { formatDate } from '../../util/download';
 import { Modal } from '../common/Modal';
@@ -41,7 +41,8 @@ function UsersSection() {
           {users.data?.items.map((u) => (
             <tr key={u.id} className={u.is_active ? '' : 'disabled'}>
               <td><b>{u.username}</b><div className="muted small">{u.display_name} {u.email}</div></td>
-              <td>{u.roles.map((r) => <span key={r} className="badge">{r}</span>)}</td>
+              <td>{u.is_signage && <span className="badge warn">signage</span>}
+                {u.roles.map((r) => <span key={r} className="badge">{r}</span>)}</td>
               <td className="small">{u.groups.join(', ')}</td>
               <td>{u.is_local ? 'local' : 'OIDC'}</td>
               <td className="small">{formatDate(u.last_login_at)}</td>
@@ -57,6 +58,31 @@ function UsersSection() {
   );
 }
 
+/** RDP/VNC connections for the signage picker, labelled with their folder path. */
+function signageCandidates(tree: Tree | undefined): { id: string; label: string }[] {
+  if (!tree) return [];
+  const folders = new Map(tree.folders.map((f) => [f.id, f]));
+  const conns = new Map(tree.connections.map((c) => [c.id, c]));
+  const pathOf = (c: Connection): string => {
+    let top = c;
+    for (let i = 0; top.parent_id && conns.has(top.parent_id) && i < 64; i++) top = conns.get(top.parent_id)!;
+    const parts: string[] = [];
+    for (let f = top.folder_id ? folders.get(top.folder_id) : undefined, i = 0; f && i < 64; i++) {
+      parts.unshift(f.name);
+      f = f.parent_id ? folders.get(f.parent_id) : undefined;
+    }
+    if (top !== c) parts.push(top.name);
+    return parts.join(' / ');
+  };
+  return tree.connections
+    .filter((c) => c.protocol === 'rdp' || c.protocol === 'vnc')
+    .map((c) => {
+      const path = pathOf(c);
+      return { id: c.id, label: `${path ? `${path} / ` : ''}${c.name} (${c.protocol.toUpperCase()}${c.hostname ? `, ${c.hostname}` : ''})` };
+    })
+    .sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: 'base', numeric: true }));
+}
+
 function UserDialog({ user, roles, onClose }: { user?: User; roles: Role[]; onClose: () => void }) {
   const [username, setUsername] = useState(user?.username ?? '');
   const [displayName, setDisplayName] = useState(user?.display_name ?? '');
@@ -64,15 +90,20 @@ function UserDialog({ user, roles, onClose }: { user?: User; roles: Role[]; onCl
   const [password, setPassword] = useState('');
   const [selected, setSelected] = useState<Set<string>>(new Set(user?.roles ?? ['user']));
   const [active, setActive] = useState(user?.is_active ?? true);
+  const [signage, setSignage] = useState(user?.is_signage ?? false);
+  const [signageConn, setSignageConn] = useState(user?.signage_connection_id ?? '');
+  const tree = useTree();
+  const screens = signageCandidates(tree.data);
   const [error, setError] = useState<string | null>(null);
   const save = async () => {
+    const signageFields = { is_signage: signage, signage_connection_id: signage && signageConn ? signageConn : null };
     try {
       if (user) {
         await patch(`/api/v1/users/${user.id}`, { display_name: displayName || null, email: email || null, is_active: active,
-          roles: [...selected], ...(password ? { password } : {}) });
+          roles: [...selected], ...signageFields, ...(password ? { password } : {}) });
       } else {
         await post('/api/v1/users', { username, display_name: displayName || null, email: email || null,
-          password: password || null, roles: [...selected] });
+          password: password || null, roles: [...selected], ...signageFields });
       }
       onClose();
     } catch (err) {
@@ -100,7 +131,21 @@ function UserDialog({ user, roles, onClose }: { user?: User; roles: Role[]; onCl
           <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="new-password" />
         </label>
       )}
-      <div className="field"><span>Roles (manually assigned; IdP-mapped roles are added at login)</span>
+      <label className="check">
+        <input type="checkbox" checked={signage} onChange={(e) => setSignage(e.target.checked)} />
+        <span>Signage display</span>
+        <small className="muted">Shows only the connection below, fullscreen and without menus. It starts after login and
+          reconnects on its own. Roles and permissions do not apply. The connection needs stored credentials.</small>
+      </label>
+      {signage && (
+        <label className="field"><span>Connection shown on the display (RDP or VNC)</span>
+          <select value={signageConn} onChange={(e) => setSignageConn(e.target.value)}>
+            <option value="">— none (the display shows a notice) —</option>
+            {screens.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
+          </select>
+        </label>
+      )}
+      <div className={`field ${signage ? 'muted' : ''}`}><span>Roles (manually assigned; IdP-mapped roles are added at login)</span>
         {roles.map((r) => (
           <label key={r.id} className="check">
             <input type="checkbox" checked={selected.has(r.name)} onChange={(e) => {

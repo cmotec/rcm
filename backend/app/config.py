@@ -102,6 +102,8 @@ class Settings(BaseSettings):
 
     AUTH_SESSION_IDLE_MINUTES: int = 60
     AUTH_SESSION_MAX_HOURS: int = 12
+    # Signage accounts (one connection, fullscreen display): login lifetime, no idle timeout.
+    SIGNAGE_SESSION_MAX_DAYS: int = 30
     COOKIE_SECURE: bool = True
     API_TOKENS_ENABLED: bool = True
 

@@ -25,6 +25,7 @@ import { AclDialog } from './components/dialogs/AclDialog';
 import { ConnectionDialog } from './components/dialogs/ConnectionDialog';
 import { FolderDialog } from './components/dialogs/FolderDialog';
 import { LoginPage } from './components/LoginPage';
+import { SignageView } from './components/SignageView';
 import { TokensDialog } from './components/TokensDialog';
 import { ConnectionTree } from './components/tree/ConnectionTree';
 import {
@@ -268,6 +269,7 @@ function AuthGate() {
     return <LoginPage config={config.data!} onLoggedIn={onLoggedIn} />;
   }
   if (window.location.pathname.startsWith('/login')) window.history.replaceState(null, '', '/');
+  if (me.data.signage) return <SignageView />;
   return <Shell config={config.data!} />;
 }
 

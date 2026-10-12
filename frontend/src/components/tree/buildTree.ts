@@ -4,10 +4,15 @@ export type TreeNode =
   | { type: 'folder'; id: string; folder: Folder; children: TreeNode[] }
   | { type: 'connection'; id: string; conn: Connection; children: TreeNode[] };
 
-const byOrder = (a: { sort_order: number; name: string }, b: { sort_order: number; name: string }) =>
-  a.sort_order - b.sort_order || a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
+const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
 
-export function buildTree(tree: Tree): TreeNode[] {
+/**
+ * Folders first, then connections; each group alphabetically by what the tree shows (`labelOf`,
+ * e.g. "hostname (description)"), case-insensitive and with natural number order (vm2 before vm10).
+ */
+export function buildTree(tree: Tree, labelOf: (c: Connection) => string = (c) => c.name): TreeNode[] {
+  const byFolderName = (a: Folder, b: Folder) => collator.compare(a.name, b.name);
+  const byLabel = (a: Connection, b: Connection) => collator.compare(labelOf(a), labelOf(b)) || collator.compare(a.name, b.name);
   const folderIds = new Set(tree.folders.map((f) => f.id));
   const connIds = new Set(tree.connections.map((c) => c.id));
   const folderChildren = new Map<string | null, Folder[]>();
@@ -29,16 +34,16 @@ export function buildTree(tree: Tree): TreeNode[] {
     type: 'connection',
     id: c.id,
     conn: c,
-    children: (connChildren.get(c.id) ?? []).sort(byOrder).map(connNode),
+    children: (connChildren.get(c.id) ?? []).sort(byLabel).map(connNode),
   });
   const folderLevel = (parent: string | null): TreeNode[] => [
-    ...(folderChildren.get(parent) ?? []).sort(byOrder).map((f): TreeNode => ({
+    ...(folderChildren.get(parent) ?? []).sort(byFolderName).map((f): TreeNode => ({
       type: 'folder',
       id: f.id,
       folder: f,
       children: folderLevel(f.id),
     })),
-    ...(connsInFolder.get(parent) ?? []).sort(byOrder).map(connNode),
+    ...(connsInFolder.get(parent) ?? []).sort(byLabel).map(connNode),
   ];
   return folderLevel(null);
 }

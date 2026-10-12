@@ -68,6 +68,9 @@ class MeOut(BaseModel):
     csrf_token: str | None
     auth_method: str
     session_expires_at: datetime | None
+    # Signage account: the UI shows only this connection, fullscreen (null = none assigned yet).
+    signage: bool = False
+    signage_connection_id: uuid.UUID | None = None
 
 
 class UserOut(Out):
@@ -81,6 +84,12 @@ class UserOut(Out):
     created_at: datetime
     roles: list[str] = []
     groups: list[str] = []
+    is_signage: bool = False
+    signage_connection_id: uuid.UUID | None = None
+
+
+_SIGNAGE_HELP = ("signage account: may only open signage_connection_id (an RDP or VNC connection), "
+                 "fullscreen without menus; roles and ACLs do not apply")
 
 
 class UserCreate(Strict):
@@ -89,6 +98,8 @@ class UserCreate(Strict):
     display_name: str | None = Field(None, max_length=255)
     password: str | None = Field(None, min_length=12, max_length=1024, description="local accounts only")
     roles: list[str] = []
+    is_signage: bool = Field(False, description=_SIGNAGE_HELP)
+    signage_connection_id: uuid.UUID | None = None
 
 
 class UserUpdate(Strict):
@@ -97,6 +108,8 @@ class UserUpdate(Strict):
     is_active: bool | None = None
     roles: list[str] | None = Field(None, description="manually assigned roles (replaces)")
     password: str | None = Field(None, min_length=12, max_length=1024)
+    is_signage: bool | None = Field(None, description=_SIGNAGE_HELP)
+    signage_connection_id: uuid.UUID | None = None
 
 
 class RoleOut(Out):
