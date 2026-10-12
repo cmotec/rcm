@@ -1,10 +1,11 @@
-import { ChevronDown, ChevronRight, FolderPlus, Plus, Search, ShieldAlert, Star, X } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight, FolderPlus, Plus, Search, ShieldAlert, SlidersHorizontal, Star, X } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { del, errorMessage, patch, post, put } from '../../api/client';
 import { hasPerm, useInvalidate, useMe, useTree } from '../../api/hooks';
 import type { Connection, Folder } from '../../api/types';
 import { openConnection } from '../../sessions/registry';
 import { dialogs } from '../../state/dialogs';
+import { connectionLabel, useTreePrefs } from '../../state/treePrefs';
 import { useWorkspace } from '../../state/workspace';
 import { FolderGlyph, ProtocolIcon } from '../common/icons';
 import { type TreeNode, buildTree, filterTree } from './buildTree';
@@ -41,6 +42,26 @@ export function ConnectionTree({ actions }: { actions: TreeActions }) {
   const [expanded, setExpanded] = useState<Set<string>>(loadExpanded);
   const [dropId, setDropId] = useState<string | null>(null);
   const focusedSession = useWorkspace((s) => s.layout.focusedSessionId);
+  const prefs = useTreePrefs();
+  const label = (c: Connection) => connectionLabel(c, prefs);
+  const renderLabel = (c: Connection) => {
+    const l = label(c);
+    return (
+      <span className="tree-name" title={l.secondary ? `${l.primary} (${l.secondary})` : l.primary}>
+        {l.primary}{l.secondary && <span className="tree-secondary"> ({l.secondary})</span>}
+      </span>
+    );
+  };
+  const viewMenu = (e: React.MouseEvent) => {
+    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const tick = (on: boolean) => (on ? <Check size={13} /> : <span style={{ width: 13 }} />);
+    dialogs.contextMenu(r.left, r.bottom + 4, [
+      { label: 'Hostname first, description in ( )', icon: tick(prefs.order === 'hostname'), action: () => prefs.update({ order: 'hostname' }) },
+      { label: 'Description first, hostname in ( )', icon: tick(prefs.order === 'description'), action: () => prefs.update({ order: 'description' }) },
+      { separator: true, label: '' },
+      { label: 'Hide hostname', icon: tick(prefs.hideHostname), action: () => prefs.update({ hideHostname: !prefs.hideHostname }) },
+    ]);
+  };
 
   const [selection, setSelection] = useState<Set<string>>(new Set());
   const [anchor, setAnchor] = useState<string | null>(null);
@@ -86,9 +107,10 @@ export function ConnectionTree({ actions }: { actions: TreeActions }) {
       toggle(c.id);
       return;
     }
-    if (mode === 'float') void openConnection(c, { floating: { x: 60, y: 40, w: 960, h: 620 } });
-    else if (mode === 'split' && focusedSession) void openConnection(c, { splitWith: { sessionId: focusedSession, edge: 'right' } });
-    else void openConnection(c);
+    const ref = { ...c, name: label(c).primary };  // tab titles use the same label as the tree
+    if (mode === 'float') void openConnection(ref, { floating: { x: 60, y: 40, w: 960, h: 620 } });
+    else if (mode === 'split' && focusedSession) void openConnection(ref, { splitWith: { sessionId: focusedSession, edge: 'right' } });
+    else void openConnection(ref);
   };
 
   const deleteConnection = async (c: Connection, hasChildren: boolean) => {
@@ -300,7 +322,7 @@ export function ConnectionTree({ actions }: { actions: TreeActions }) {
           onClick={(e) => onRowClick(e, n)}
           onDoubleClick={(e) => !e.ctrlKey && !e.metaKey && !e.shiftKey && n.type === 'connection' && open(n.conn)}
           onContextMenu={onContext}
-          title={n.type === 'connection' ? n.conn.name : n.folder.description ?? n.folder.name}
+          title={n.type === 'connection' ? undefined : n.folder.description ?? n.folder.name}
         >
           <span className="twisty" onClick={(e) => { e.stopPropagation(); if (hasChildren) toggle(n.id); }}>
             {hasChildren ? (isOpen ? <ChevronDown size={13} /> : <ChevronRight size={13} />) : null}
@@ -313,7 +335,7 @@ export function ConnectionTree({ actions }: { actions: TreeActions }) {
           ) : (
             <>
               <ProtocolIcon protocol={n.conn.protocol} />
-              <span className="tree-name">{n.conn.name}</span>
+              {renderLabel(n.conn)}
               <span className="spacer" />
               {n.conn.warnings.length > 0 && (
                 <span title={n.conn.warnings.map((w) => w.message).join('\n')}><ShieldAlert size={12} className="warn-icon" /></span>
@@ -335,6 +357,7 @@ export function ConnectionTree({ actions }: { actions: TreeActions }) {
           <input placeholder="Search name, host, tag…" value={query} onChange={(e) => setQuery(e.target.value)} />
           {query && <button className="icon-btn" onClick={() => setQuery('')} aria-label="Clear"><X size={12} /></button>}
         </div>
+        <button className="icon-btn" title="View options" onMouseDown={(e) => e.stopPropagation()} onClick={viewMenu}><SlidersHorizontal size={16} /></button>
         <button className="icon-btn" title="New connection" disabled={!canCreateConn} onClick={() => actions.newConnection({})}><Plus size={16} /></button>
         <button className="icon-btn" title="New folder" disabled={!canCreateFolder} onClick={() => actions.newFolder(null)}><FolderPlus size={16} /></button>
       </div>
@@ -348,7 +371,7 @@ export function ConnectionTree({ actions }: { actions: TreeActions }) {
                      onClick={() => actions.select(c)} onDoubleClick={() => open(c)}
                      draggable onDragStart={(e) => e.dataTransfer.setData(CONNECTION_MIME, JSON.stringify({ id: c.id, name: c.name, protocol: c.protocol }))}>
                   <ProtocolIcon protocol={c.protocol} />
-                  <span className="tree-name">{c.name}</span>
+                  {renderLabel(c)}
                 </div>
               </li>
             ))}

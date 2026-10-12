@@ -176,6 +176,7 @@ input[type='checkbox'], input[type='radio'] { accent-color: var(--accent); }
 .tree-row.drop { border-color: var(--accent); background: var(--accent-soft); }
 .twisty { width: 14px; display: inline-flex; color: var(--text-muted); flex: none; }
 .tree-name { overflow: hidden; text-overflow: ellipsis; }
+.tree-secondary { color: var(--text-muted); }
 .tree-host { color: var(--text-muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; margin-left: auto; padding-left: 8px; }
 .folder-icon { color: #c9932b; flex: none; }
 .proto-icon { flex: none; color: var(--text-muted); }

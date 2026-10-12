@@ -33,6 +33,7 @@ import {
   startLayoutPersistence,
 } from './sessions/registry';
 import { dialogs } from './state/dialogs';
+import { useTreePrefs } from './state/treePrefs';
 import { useWorkspace } from './state/workspace';
 import { savedConnectionIds } from './workspace/model';
 import { Workspace } from './workspace/Workspace';
@@ -81,7 +82,8 @@ function Shell({ config }: { config: AuthConfig }) {
   useEffect(() => {
     if (started.current) return;
     started.current = true;
-    void loadPreferences().then(() => {
+    void loadPreferences().then((prefs) => {
+      useTreePrefs.getState().hydrate(prefs.tree);
       const saved = savedWorkspace();
       const n = saved ? savedConnectionIds(saved).length : 0;
       if (n) setRestoreOffer(n);

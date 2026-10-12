@@ -151,7 +151,7 @@ export function ConnectionDialog({ connection, placement, onClose }: Props) {
     setSaving(true);
     setError(null);
     const body: Record<string, unknown> = {
-      name: name.trim(),
+      name: effectiveName,
       hostname: hostname.trim() || null,
       port: port ? Number(port) : null,
       search_domain: searchDomain.trim() || null,
@@ -201,12 +201,19 @@ export function ConnectionDialog({ connection, placement, onClose }: Props) {
   };
 
   const isHost = protocol === 'host';
+  // The name is optional: fall back to the host name, then the description.
+  const effectiveName = name.trim() || hostname.trim() || description.split(/\r?\n/)[0].trim().slice(0, 255);
+  const hostForPreview = hostname.trim() || inheritedHost || '';
+  const domainForPreview = (searchDomain.trim() || inheritedSearch?.split(',')[0]?.trim() || '').replace(/^\.+|\.+$/g, '');
+  const connectsTo = hostForPreview
+    ? (domainForPreview && !hostForPreview.includes('.') && !hostForPreview.includes(':') ? `${hostForPreview}.${domainForPreview}` : hostForPreview)
+    : null;
   return (
     <Modal title={editing ? `Edit ${connection!.name}` : 'New connection'} onClose={onClose} width={720} className="conn-dialog"
            footer={<>
              {error && <span className="form-error">{error}</span>}
              <button onClick={onClose}>Cancel</button>
-             <button className="primary" disabled={!name.trim() || saving} onClick={save}>{saving ? 'Saving…' : 'Save'}</button>
+             <button className="primary" disabled={!effectiveName || saving} onClick={save}>{saving ? 'Saving…' : 'Save'}</button>
            </>}>
       <div className="placement muted">
         {parentName ? <>Child of <b>{parentName}</b> — inherits hostname and credentials</> : folder ? <>In folder <b>{folder.name}</b></> : 'At the root'}
@@ -221,8 +228,24 @@ export function ConnectionDialog({ connection, placement, onClose }: Props) {
 
       {tab === 'general' && (
         <div className="form-grid">
-          <label className="field span2"><span>Display name</span>
-            <input value={name} onChange={(e) => setName(e.target.value)} autoFocus placeholder="e.g. Production DB server" />
+          <label className="field"><span>Hostname or IP address</span>
+            <input value={hostname} onChange={(e) => setHostname(e.target.value)} placeholder={inheritedHost ?? 'srv01'}
+                   spellCheck={false} autoFocus />
+            {hostname ? (inheritedHost && <Inherited from={`${inheritedHost} of ${parentName}`} onReset={() => setHostname('')} />)
+              : <Inherited value={inheritedHost} from={sourceLabel(inherited?.hostname) || parentName} />}
+          </label>
+          <label className="field"><span>Domain (optional)</span>
+            <input value={searchDomain} onChange={(e) => setSearchDomain(e.target.value)} placeholder={inheritedSearch ?? 'corp.example.com'} spellCheck={false} />
+            {searchDomain ? (inheritedSearch && <Inherited from={inheritedSearch} onReset={() => setSearchDomain('')} />)
+              : <Inherited value={inheritedSearch} from={sourceLabel(inherited?.search_domains)} />}
+          </label>
+          {connectsTo && (
+            <div className="span2 muted small connects-to">
+              Connects to <b>{connectsTo}</b>. The domain is appended to host names without a dot and is not shown in the connection list.
+            </div>
+          )}
+          <label className="field span2"><span>Description (shown in brackets next to the host name)</span>
+            <input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="e.g. Production database" />
           </label>
           <label className="field"><span>Protocol</span>
             <select value={protocol} onChange={(e) => setProtocol(e.target.value as Protocol)}>
@@ -233,21 +256,11 @@ export function ConnectionDialog({ connection, placement, onClose }: Props) {
             <input type="number" value={port} onChange={(e) => setPort(e.target.value)} disabled={isHost}
                    placeholder={portDefault ? `${portDefault} (default)` : ''} />
           </label>
-          <label className="field span2"><span>Hostname or IP address</span>
-            <input value={hostname} onChange={(e) => setHostname(e.target.value)} placeholder={inheritedHost ?? 'server01.example.com'} spellCheck={false} />
-            {hostname ? (inheritedHost && <Inherited from={`${inheritedHost} of ${parentName}`} onReset={() => setHostname('')} />)
-              : <Inherited value={inheritedHost} from={sourceLabel(inherited?.hostname) || parentName} />}
+          <label className="field"><span>Name (optional)</span>
+            <input value={name} onChange={(e) => setName(e.target.value)} placeholder={hostname.trim() || 'used when there is no own host name'} />
           </label>
-          <label className="field span2"><span>DNS search domain</span>
-            <input value={searchDomain} onChange={(e) => setSearchDomain(e.target.value)} placeholder={inheritedSearch ?? 'only applied to single-label host names'} spellCheck={false} />
-            {searchDomain ? (inheritedSearch && <Inherited from={inheritedSearch} onReset={() => setSearchDomain('')} />)
-              : <Inherited value={inheritedSearch} from={sourceLabel(inherited?.search_domains)} />}
-          </label>
-          <label className="field span2"><span>Tags (comma separated)</span>
+          <label className="field"><span>Tags (comma separated)</span>
             <input value={tags} onChange={(e) => setTags(e.target.value)} placeholder="prod, linux" />
-          </label>
-          <label className="field span2"><span>Description</span>
-            <textarea rows={3} value={description} onChange={(e) => setDescription(e.target.value)} />
           </label>
           {effective && (
             <div className="span2 effective-box">
