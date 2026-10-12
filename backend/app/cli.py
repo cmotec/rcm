@@ -7,6 +7,7 @@
   rotate-keys                  re-encrypt all secrets with ENCRYPTION_ACTIVE_KEY_ID
   openapi [FILE]               write the OpenAPI document (default: stdout)
   check-config                 validate configuration and connectivity
+  ftp-test HOST [options]      diagnose an FTP/FTPS connection step by step (see --help)
 """
 
 from __future__ import annotations
@@ -152,6 +153,50 @@ def cmd_openapi(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_ftp_test(args: argparse.Namespace) -> int:
+    """Run the same FTP/FTPS sequence the file manager uses and print every step."""
+    import os
+    import time
+
+    from app.errors import AppError
+    from app.services.sessions.files.ftp import connect_ftp
+
+    password = os.environ.get("FTP_TEST_PASSWORD") or getpass.getpass(f"Password for {args.user}: ")
+    tls = None if args.tls == "none" else args.tls
+    port = args.port or (990 if tls == "implicit" else 21)
+    print(f"Testing {args.tls} FTP to {args.host}:{port} as {args.user} "
+          f"(passive={not args.active}, verify_tls={args.verify}, timeout={args.timeout}s)")
+    try:
+        ftp = connect_ftp(host=args.host, port=port, username=args.user, password=password, tls=tls,
+                          tls_verify=args.verify, ca_bundle=None, passive=not args.active,
+                          trust_pasv_address=args.trust_pasv, encoding="utf-8", timeout=args.timeout, log=print)
+    except AppError as exc:
+        print(f"FAIL {exc.detail}")
+        return 1
+    try:
+        print(f"ok   PWD: {ftp.pwd()}")
+        if not args.active:
+            host, dport = ftp.makepasv()
+            print(f"ok   PASV: server announces data port {dport} on {host} "
+                  f"(connecting to {'that address' if args.trust_pasv else args.host})")
+        lines: list[str] = []
+        start = time.monotonic()
+        ftp.retrlines("LIST", lines.append)
+        print(f"ok   LIST over the data connection: {len(lines)} entries in {time.monotonic() - start:.1f}s")
+        for line in lines[:10]:
+            print(f"       {line}")
+    except Exception as exc:  # noqa: BLE001 - this is a diagnostic tool
+        print(f"FAIL data connection / listing: {type(exc).__name__}: {exc}")
+        return 1
+    finally:
+        try:
+            ftp.quit()
+        except Exception:  # noqa: S110
+            pass
+    print("All steps succeeded.")
+    return 0
+
+
 def cmd_check_config(_: argparse.Namespace) -> int:
     from app import db as dbmod
     from app.security.crypto import init_crypto
@@ -202,6 +247,16 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("file", nargs="?")
     p.set_defaults(fn=cmd_openapi)
     sub.add_parser("check-config").set_defaults(fn=cmd_check_config)
+    p = sub.add_parser("ftp-test", help="diagnose an FTP/FTPS connection step by step")
+    p.add_argument("host")
+    p.add_argument("--port", type=int, default=0, help="default: 990 for implicit, 21 otherwise")
+    p.add_argument("--user", default="anonymous")
+    p.add_argument("--tls", choices=["implicit", "explicit", "none"], default="implicit")
+    p.add_argument("--verify", action="store_true", help="validate the TLS certificate (default: off)")
+    p.add_argument("--active", action="store_true", help="active instead of passive mode")
+    p.add_argument("--trust-pasv", action="store_true", help="use the address from the PASV reply")
+    p.add_argument("--timeout", type=float, default=15.0)
+    p.set_defaults(fn=cmd_ftp_test)
     args = parser.parse_args(argv)
     return int(args.fn(args))
 

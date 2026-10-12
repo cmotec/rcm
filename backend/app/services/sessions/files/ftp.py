@@ -204,9 +204,92 @@ def _map_error(exc: Exception, path: str) -> Exception:
         )
     if isinstance(exc, ssl.SSLError):
         return FileOpError(f"TLS error: {exc}", code="tls_error")
+    if isinstance(exc, TimeoutError):
+        return FileOpError(
+            f"{path}: the server did not answer in time. Login worked, so the data connection is the likely "
+            "cause: in passive mode the API container opens a second connection to the port the server "
+            "announces. Check firewalls/VLANs between the Docker host and the server.",
+            code="timeout",
+        )
     if isinstance(exc, (OSError, EOFError, ftplib.Error)):
         return FileOpError(f"{path}: {msg or type(exc).__name__}", code="connection_error")
     return exc
+
+
+def _tls_context(tls_verify: bool, ca_bundle: str | None) -> ssl.SSLContext:
+    ctx = ssl.create_default_context(cafile=ca_bundle)
+    if not tls_verify:
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        # Validation is off anyway ("accept the device's certificate"): also accept the older ciphers and
+        # small keys that embedded FTPS servers (printers, NAS, cameras) still use.
+        try:
+            ctx.set_ciphers("DEFAULT:@SECLEVEL=0")
+        except ssl.SSLError:
+            pass
+    return ctx
+
+
+def _describe(exc: BaseException, timeout: float) -> str:
+    if isinstance(exc, TimeoutError):
+        return f"no answer within {timeout:g} s"
+    if isinstance(exc, ConnectionRefusedError):
+        return "connection refused (nothing listening on that port, or a firewall rejects it)"
+    if isinstance(exc, OSError) and exc.errno in (101, 113, 10051, 10065):
+        return f"host not reachable from the API container ({exc.strerror})"
+    return str(exc) or type(exc).__name__
+
+
+def connect_ftp(*, host: str, port: int, username: str | None, password: str | None, tls: str | None,
+                tls_verify: bool, ca_bundle: str | None, passive: bool, trust_pasv_address: bool,
+                encoding: str, timeout: float, log: Callable[[str], None] | None = None) -> ftplib.FTP:
+    """Open and log in an FTP/FTPS control connection, reporting the step that failed.
+
+    ``log`` (used by ``app.cli ftp-test``) receives a line per completed step.
+    """
+    say = log or (lambda _msg: None)
+    if tls:
+        klass = ImplicitFTPS if tls == "implicit" else ExplicitFTPS
+        ftp: ftplib.FTP = klass(context=_tls_context(tls_verify, ca_bundle), timeout=timeout, encoding=encoding)
+    else:
+        ftp = ftplib.FTP(timeout=timeout, encoding=encoding)
+    ftp.trust_server_pasv_ipv4_address = trust_pasv_address
+
+    stage = f"TCP connection to {host}:{port}"
+    try:
+        # A plain TCP probe first, so "unreachable" and "TLS/greeting problem" are told apart.
+        socket.create_connection((host, port), timeout=timeout).close()
+        say(f"ok   {stage}")
+        stage = ("TLS handshake and server greeting (implicit FTPS)" if tls == "implicit"
+                 else "server greeting")
+        welcome = ftp.connect(host, port, timeout=timeout)
+        say(f"ok   {stage}: {welcome.strip()[:120]}")
+        if tls == "explicit":
+            stage = "AUTH TLS (explicit FTPS)"
+            ftp.auth()  # type: ignore[attr-defined]
+            say(f"ok   {stage}")
+        stage = f"login as {username or 'anonymous'}"
+        ftp.login(username or "anonymous", password or "")
+        say(f"ok   {stage}")
+        if tls:
+            stage = "PBSZ/PROT P (encrypt data connections)"
+            ftp.prot_p()  # type: ignore[attr-defined]
+            say(f"ok   {stage}")
+        ftp.set_pasv(passive)
+        return ftp
+    except Exception as exc:
+        try:
+            ftp.close()
+        except Exception:  # noqa: S110
+            pass
+        if isinstance(exc, ssl.SSLCertVerificationError):
+            raise _map_error(exc, host) from exc
+        hint = ""
+        if isinstance(exc, TimeoutError) and stage == "server greeting" and port == 990:
+            hint = " Port 990 normally uses implicit TLS: choose protocol FTPS with TLS mode 'Implicit'."
+        if isinstance(exc, ftplib.error_perm) and stage.startswith("login"):
+            hint = " Check username and password (Bambu Lab printers: user 'bblp', password = LAN access code)."
+        raise FileOpError(f"FTP {stage} failed: {_describe(exc, timeout)}.{hint}", code="ftp_connect_failed") from exc
 
 
 class FtpFS(RemoteFS):
@@ -230,33 +313,9 @@ class FtpFS(RemoteFS):
                    encoding: str, timeout: float, transfer_type: str, show_hidden: bool,
                    start_directory: str | None) -> FtpFS:
         def factory() -> ftplib.FTP:
-            if tls:
-                ctx = ssl.create_default_context(cafile=ca_bundle)
-                if not tls_verify:
-                    ctx.check_hostname = False
-                    ctx.verify_mode = ssl.CERT_NONE
-                klass = ImplicitFTPS if tls == "implicit" else ExplicitFTPS
-                ftp: ftplib.FTP = klass(context=ctx, timeout=timeout, encoding=encoding)
-            else:
-                ftp = ftplib.FTP(timeout=timeout, encoding=encoding)
-            ftp.trust_server_pasv_ipv4_address = trust_pasv_address
-            try:
-                ftp.connect(host, port, timeout=timeout)
-            except TimeoutError as exc:
-                if tls != "implicit" and port == 990:
-                    raise FileOpError(
-                        "No FTP greeting from port 990. That port normally uses implicit TLS: choose "
-                        "protocol FTPS with TLS mode 'Implicit' in the connection settings.",
-                        code="tls_mode_mismatch",
-                    ) from exc
-                raise
-            if tls == "explicit":
-                ftp.auth()  # type: ignore[attr-defined]
-            ftp.login(username or "anonymous", password or "")
-            if tls:
-                ftp.prot_p()  # type: ignore[attr-defined]
-            ftp.set_pasv(passive)
-            return ftp
+            return connect_ftp(host=host, port=port, username=username, password=password, tls=tls,
+                               tls_verify=tls_verify, ca_bundle=ca_bundle, passive=passive,
+                               trust_pasv_address=trust_pasv_address, encoding=encoding, timeout=timeout)
 
         fs = cls(factory, transfer_type, show_hidden, start_directory)
         await fs._run(lambda ftp: None, "/")
