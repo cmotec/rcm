@@ -1,0 +1,29 @@
+# EVALUATION ONLY: a local PostgreSQL so the stack can be tried without an external database.
+# Production deployments use an externally managed PostgreSQL (docs/deployment.md).
+#   docker compose -f docker-compose.yml -f docker-compose.postgres.yml up -d
+# Set in .env: DB_HOST=postgres DB_SSLMODE=disable and DB_PASSWORD to the value below.
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: ${DB_NAME:-app}
+      POSTGRES_USER: ${DB_USER:-app}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks:
+      - app
+    restart: unless-stopped
+
+  api:
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  pgdata: {}

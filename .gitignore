@@ -1,0 +1,30 @@
+# secrets & local configuration
+.env
+.env.*
+!.env.example
+certs/
+secrets/
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+build/
+
+# node
+node_modules/
+frontend/dist/
+*.log
+
+# editors / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# e2e artefacts
+e2e/shots/

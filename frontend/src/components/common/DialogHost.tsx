@@ -1,0 +1,173 @@
+import { ShieldAlert, TriangleAlert } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { type DialogRequest, type InteractiveCredentials, useDialogStore } from '../../state/dialogs';
+import { Modal } from './Modal';
+
+function ConfirmDialog({ req }: { req: Extract<DialogRequest, { kind: 'confirm' }> }) {
+  return (
+    <Modal title={req.title} onClose={() => req.resolve(false)} width={440}
+           footer={<>
+             <button onClick={() => req.resolve(false)}>Cancel</button>
+             <button className={req.danger ? 'danger primary' : 'primary'} onClick={() => req.resolve(true)}>
+               {req.confirmLabel ?? 'OK'}
+             </button>
+           </>}>
+      <p>{req.message}</p>
+    </Modal>
+  );
+}
+
+function PromptDialog({ req }: { req: Extract<DialogRequest, { kind: 'prompt' }> }) {
+  const [value, setValue] = useState(req.initial ?? '');
+  return (
+    <Modal title={req.title} onClose={() => req.resolve(null)} width={440}
+           footer={<>
+             <button onClick={() => req.resolve(null)}>Cancel</button>
+             <button className="primary" onClick={() => req.resolve(value.trim() || null)}>OK</button>
+           </>}>
+      <form onSubmit={(e) => { e.preventDefault(); req.resolve(value.trim() || null); }}>
+        <label className="field">
+          <span>{req.label}</span>
+          <input type={req.secret ? 'password' : 'text'} value={value} onChange={(e) => setValue(e.target.value)} autoFocus />
+        </label>
+      </form>
+    </Modal>
+  );
+}
+
+function CredentialsDialog({ req }: { req: Extract<DialogRequest, { kind: 'credentials' }> }) {
+  const [v, setV] = useState<InteractiveCredentials>({ username: req.username ?? '', password: '', domain: req.domain ?? '' });
+  const submit = () => {
+    const out: InteractiveCredentials = {};
+    if (v.username) out.username = v.username;
+    if (v.password) out.password = v.password;
+    if (v.domain) out.domain = v.domain;
+    req.resolve(out);
+  };
+  return (
+    <Modal title={`Sign in to ${req.connectionName}`} onClose={() => req.resolve(null)} width={420}
+           footer={<>
+             <button onClick={() => req.resolve(null)}>Cancel</button>
+             <button className="primary" onClick={submit}>Connect</button>
+           </>}>
+      <form onSubmit={(e) => { e.preventDefault(); submit(); }} autoComplete="off">
+        <p className="muted">These credentials are used for this session only and are not stored.</p>
+        <label className="field"><span>Username</span>
+          <input value={v.username} onChange={(e) => setV({ ...v, username: e.target.value })} autoFocus={!req.username} />
+        </label>
+        <label className="field"><span>Password</span>
+          <input type="password" value={v.password} onChange={(e) => setV({ ...v, password: e.target.value })}
+                 autoFocus={Boolean(req.username)} />
+        </label>
+        {req.fields.includes('domain') && (
+          <label className="field"><span>Domain</span>
+            <input value={v.domain} onChange={(e) => setV({ ...v, domain: e.target.value })} />
+          </label>
+        )}
+        <button type="submit" hidden />
+      </form>
+    </Modal>
+  );
+}
+
+function HostKeyDialog({ req }: { req: Extract<DialogRequest, { kind: 'hostkey' }> }) {
+  const { info, changed } = req;
+  const blocked = changed && !info.can_replace;
+  return (
+    <Modal title={changed ? 'SSH host key has changed' : 'Unknown SSH host key'} onClose={() => req.resolve(false)}
+           width={560}
+           footer={<>
+             <button onClick={() => req.resolve(false)}>{blocked ? 'Close' : 'Cancel'}</button>
+             {!blocked && (
+               <button className={changed ? 'danger primary' : 'primary'} onClick={() => req.resolve(true)}>
+                 {changed ? 'Replace key and connect' : 'Trust and connect'}
+               </button>
+             )}
+           </>}>
+      <div className={`hostkey ${changed ? 'changed' : ''}`}>
+        {changed ? <ShieldAlert size={28} /> : <TriangleAlert size={28} />}
+        <div>
+          {changed ? (
+            <p><strong>Warning:</strong> the server presented a different host key than the one trusted before.
+              This can mean the server was reinstalled, or that someone is intercepting the connection.
+              {blocked && ' Only users who can edit this connection or manage known hosts may replace the key.'}</p>
+          ) : (
+            <p>The authenticity of <strong>{info.hostname}:{info.port}</strong> cannot be established yet.
+              Compare the fingerprint with the one published by the server administrator.</p>
+          )}
+          <dl className="kv">
+            <dt>Connection</dt><dd>{info.connection_name}</dd>
+            <dt>Key type</dt><dd>{info.key_type}</dd>
+            <dt>Fingerprint</dt><dd className="mono">{info.fingerprint}</dd>
+            {info.previous_fingerprint && <><dt>Previously</dt><dd className="mono">{info.previous_fingerprint}</dd></>}
+          </dl>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+function ContextMenu() {
+  const menu = useDialogStore((s) => s.menu);
+  useEffect(() => {
+    if (!menu) return;
+    const close = () => useDialogStore.setState({ menu: null });
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && close();
+    window.addEventListener('mousedown', close);
+    window.addEventListener('blur', close);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('mousedown', close);
+      window.removeEventListener('blur', close);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [menu]);
+  if (!menu) return null;
+  const x = Math.min(menu.x, window.innerWidth - 230);
+  const y = Math.min(menu.y, window.innerHeight - menu.items.length * 30 - 16);
+  return (
+    <ul className="context-menu" style={{ left: x, top: Math.max(4, y) }} role="menu"
+        onMouseDown={(e) => e.stopPropagation()}>
+      {menu.items.map((item, i) =>
+        item.separator ? <li key={i} className="sep" role="separator" /> : (
+          <li key={i} role="menuitem" className={`${item.danger ? 'danger' : ''} ${item.disabled ? 'disabled' : ''}`}
+              onClick={() => {
+                if (item.disabled) return;
+                useDialogStore.setState({ menu: null });
+                item.action?.();
+              }}>
+            {item.icon}<span>{item.label}</span>
+          </li>
+        ))}
+    </ul>
+  );
+}
+
+function Toasts() {
+  const toasts = useDialogStore((s) => s.toasts);
+  return (
+    <div className="toasts" aria-live="polite">
+      {toasts.map((t) => (
+        <div key={t.id} className={`toast ${t.kind}`}
+             onClick={() => useDialogStore.setState((s) => ({ toasts: s.toasts.filter((x) => x.id !== t.id) }))}>
+          {t.message}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+export function DialogHost() {
+  const queue = useDialogStore((s) => s.queue);
+  const req = queue[0];
+  return (
+    <>
+      {req?.kind === 'confirm' && <ConfirmDialog key={req.id} req={req} />}
+      {req?.kind === 'prompt' && <PromptDialog key={req.id} req={req} />}
+      {req?.kind === 'credentials' && <CredentialsDialog key={req.id} req={req} />}
+      {req?.kind === 'hostkey' && <HostKeyDialog key={req.id} req={req} />}
+      <ContextMenu />
+      <Toasts />
+    </>
+  );
+}

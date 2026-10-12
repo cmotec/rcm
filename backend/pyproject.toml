@@ -1,0 +1,62 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "backend"
+version = "0.1.0"
+description = "Backend of the self-hosted remote connection manager"
+requires-python = ">=3.12"
+dependencies = [
+  "fastapi==0.143.0",
+  "uvicorn[standard]==0.54.0",
+  "sqlalchemy[asyncio]==2.1.4",
+  "asyncpg==0.32.0",
+  "alembic==1.20.0",
+  "pydantic==2.14.0",
+  "pydantic-settings==2.15.0",
+  "asyncssh==2.24.1",
+  "bcrypt==5.0.0",  # required by asyncssh for passphrase-protected OpenSSH keys
+  "httpx==0.28.1",
+  "pyjwt[crypto]==2.15.1",
+  "cryptography==50.0.2",
+  "argon2-cffi==25.1.0",
+  "structlog==26.1.0",
+  "python-multipart==0.0.32",
+  "defusedxml==0.7.1",
+]
+
+[project.optional-dependencies]
+test = [
+  "pytest==9.1.1",
+  "pytest-asyncio==1.4.0",
+  "pyftpdlib==2.2.0",
+  "pgserver==0.1.4",
+  "ruff==0.17.0",
+]
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
+testpaths = ["tests"]
+filterwarnings = ["ignore::DeprecationWarning:asyncssh.*"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "ASYNC", "S"]
+# ASYNC109: explicit timeout parameters are deliberate; S321: FTP is a required (and labelled) feature.
+ignore = ["S101", "S311", "B008", "E501", "ASYNC109", "S321", "UP046"]
+
+[tool.ruff.lint.isort]
+known-third-party = ["alembic"]
+known-first-party = ["app", "tests"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S105", "S106", "S108"]

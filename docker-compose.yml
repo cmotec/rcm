@@ -1,0 +1,105 @@
+# Core deployment: web (nginx + SPA), api (Python), guacd.
+# PostgreSQL is EXTERNAL and configured through .env (DB_*). See docs/deployment.md.
+#
+#   cp .env.example .env   # fill in the mandatory values
+#   docker compose up -d --build
+#
+# Optional overlays:
+#   docker-compose.tls.yml       TLS termination in the web container
+#   docker-compose.postgres.yml  throw-away PostgreSQL for evaluation only
+
+x-hardening: &hardening
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  restart: unless-stopped
+  logging:
+    driver: json-file
+    options:
+      max-size: "20m"
+      max-file: "5"
+
+services:
+  web:
+    <<: *hardening
+    build: ./frontend
+    image: ${IMAGE_PREFIX:-local}/connections-web:${IMAGE_TAG:-latest}
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /var/cache/nginx
+      - /etc/nginx/conf.d
+    environment:
+      API_UPSTREAM: api:8000
+      CLIENT_MAX_BODY_SIZE: ${CLIENT_MAX_BODY_SIZE:-0}
+    ports:
+      - "${HTTP_BIND:-0.0.0.0}:${HTTP_PORT:-8080}:8080"
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - app
+
+  api:
+    <<: *hardening
+    build: ./backend
+    image: ${IMAGE_PREFIX:-local}/connections-api:${IMAGE_TAG:-latest}
+    read_only: true
+    tmpfs:
+      - /tmp
+    env_file: .env
+    environment:
+      GUACD_HOST: guacd
+      GUACD_PORT: "4822"
+      # Only the web container talks to the API; trust its X-Forwarded-For.
+      FORWARDED_ALLOW_IPS: "*"
+    # Exactly one replica: live sessions are held in this process (docs/limitations-and-risks.md).
+    deploy:
+      replicas: 1
+    stop_grace_period: 30s
+    depends_on:
+      guacd:
+        condition: service_healthy
+    networks:
+      - app
+      - gateway
+
+  guacd:
+    <<: *hardening
+    image: guacamole/guacd:1.6.0
+    # No published ports: guacd is reachable only from the api container (network "gateway").
+    volumes:
+      - drives:/drives
+      - recordings:/recordings
+      # Optional: CA bundle (system CAs + your internal CA) for RDP certificate validation, see docs/deployment.md
+      # - ./certs/ca-bundle.crt:/etc/ssl/certs/ca-certificates.crt:ro
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 4822 || (echo > /dev/tcp/127.0.0.1/4822) 2>/dev/null"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    depends_on:
+      volume-init:
+        condition: service_completed_successfully
+    networks:
+      - gateway
+
+  # One-shot: make the drive/recording volumes writable for guacd (uid 1000) without running guacd as root.
+  volume-init:
+    image: busybox:1.37
+    command: ["sh", "-c", "chown -R 1000:1000 /drives /recordings && chmod 0750 /drives /recordings"]
+    volumes:
+      - drives:/drives
+      - recordings:/recordings
+    restart: "no"
+    network_mode: none
+
+networks:
+  app: {}
+  gateway: {}
+
+volumes:
+  drives: {}
+  recordings: {}
