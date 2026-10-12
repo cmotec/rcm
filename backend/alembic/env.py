@@ -36,15 +36,26 @@ async def run_migrations_online() -> None:
         build_url(settings),
         connect_args={"ssl": build_ssl_context(settings), "timeout": settings.DB_CONNECT_TIMEOUT_SECONDS},
     )
-    async with engine.connect() as conn:
-        await conn.execute(text("SELECT pg_advisory_lock(:k)"), {"k": MIGRATION_LOCK})
-        try:
-            await conn.run_sync(_do_run)
+    try:
+        async with engine.connect() as conn:
+            await conn.execute(text("SELECT pg_advisory_lock(:k)"), {"k": MIGRATION_LOCK})
             await conn.commit()
-        finally:
-            await conn.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": MIGRATION_LOCK})
-            await conn.commit()
-    await engine.dispose()
+            try:
+                await conn.run_sync(_do_run)
+                await conn.commit()
+            except BaseException:
+                # A failed migration leaves the transaction aborted; roll back so the real error is
+                # reported instead of "current transaction is aborted" from the unlock below.
+                await conn.rollback()
+                raise
+            finally:
+                try:
+                    await conn.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": MIGRATION_LOCK})
+                    await conn.commit()
+                except Exception:  # noqa: S110 - the lock is released with the connection anyway
+                    pass
+    finally:
+        await engine.dispose()
 
 
 if context.is_offline_mode():
