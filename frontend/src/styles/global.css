@@ -431,3 +431,14 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; user-sel
   .toasts { left: 10px; right: 10px; max-width: none; }
   .context-menu { max-width: calc(100vw - 16px); }
 }
+
+/* --- touch key bar ----------------------------------------------------------------------- */
+.key-bar { display: flex; gap: 4px; padding: 4px; overflow-x: auto; background: var(--bg-elev);
+  border-bottom: 1px solid var(--border); flex: none; scrollbar-width: none; touch-action: pan-x; }
+.key-bar .key { flex: none; min-width: 40px; height: 34px; padding: 0 9px; justify-content: center;
+  font-size: 13px; font-family: var(--mono); user-select: none; -webkit-user-select: none; }
+.key-bar .key.mod { font-family: var(--font); }
+.key-bar .key.on { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+/* zoomed remote desktop: scrollable, anchored top-left (the view follows the pointer) */
+.guac-display-host.zoomed { overflow: auto; justify-content: flex-start; align-items: flex-start; }
+.tree-row { -webkit-touch-callout: none; -webkit-user-select: none; }

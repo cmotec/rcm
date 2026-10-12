@@ -12,7 +12,6 @@ import {
   RotateCw,
   ShieldAlert,
   SquareArrowOutUpRight,
-  Type,
   Upload,
   X,
 } from 'lucide-react';
@@ -25,6 +24,7 @@ import { closeSessionById, getController } from '../sessions/registry';
 import { useWorkspace } from '../state/workspace';
 import { formatBytes } from '../util/download';
 import { useMediaQuery } from '../util/useMediaQuery';
+import { MobileKeyBar } from './MobileKeyBar';
 import { dockToTab, floatSession, focusSession, placementOf } from './model';
 import { SESSION_MIME, useSessionState } from './useSession';
 
@@ -172,9 +172,6 @@ export function SessionFrame({ sessionId, mode, floatControls, onTitlePointerDow
           {ctrl instanceof GuacSession && (
             <>
               <button className="icon-btn" title="Send Ctrl+Alt+Del" onClick={() => ctrl.sendCtrlAltDel()}><Keyboard size={14} /></button>
-              {coarsePointer && (
-                <button className="icon-btn" title="Show on-screen keyboard" onClick={() => ctrl.showKeyboard()}><Type size={14} /></button>
-              )}
               {ctrl.uploadsAllowed && (
                 <button className="icon-btn" title="Upload files to the redirected drive" onClick={() => upload.current?.click()}>
                   <Upload size={14} />
@@ -200,6 +197,9 @@ export function SessionFrame({ sessionId, mode, floatControls, onTitlePointerDow
           <button className="icon-btn danger" title="Disconnect" onClick={() => void closeSessionById(sessionId)}><X size={14} /></button>
         </div>
       </div>
+      {coarsePointer && (ctrl instanceof GuacSession || ctrl instanceof TerminalSession) && (
+        <MobileKeyBar target={ctrl} desktop={ctrl instanceof GuacSession ? ctrl : undefined} />
+      )}
       <div className="frame-body">
         <SessionSlot sessionId={sessionId} />
         <StatusOverlay sessionId={sessionId} />

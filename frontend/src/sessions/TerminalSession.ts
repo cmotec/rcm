@@ -4,6 +4,15 @@ import '@xterm/xterm/css/xterm.css';
 import { wsUrl } from '../api/client';
 import type { SessionInfo } from '../api/types';
 import { BaseSession } from './base';
+import {
+  type Modifiers,
+  NO_MODIFIERS,
+  type SpecialKey,
+  type SpecialKeyTarget,
+  anyModifier,
+  applyModifiersToText,
+  terminalSequence,
+} from './specialKeys';
 
 const THEMES: Record<string, { background: string; foreground: string; cursor?: string }> = {
   dark: { background: '#0f1115', foreground: '#d6dae0', cursor: '#9ecbff' },
@@ -14,7 +23,7 @@ const THEMES: Record<string, { background: string; foreground: string; cursor?: 
 };
 
 /** Native SSH terminal (xterm.js ↔ WebSocket ↔ asyncssh). */
-export class TerminalSession extends BaseSession {
+export class TerminalSession extends BaseSession implements SpecialKeyTarget {
   private term: Terminal | null = null;
   private fit: FitAddon | null = null;
   private ws: WebSocket | null = null;
@@ -51,12 +60,12 @@ export class TerminalSession extends BaseSession {
     term.open(this.host);
     fit.fit();
     term.onData((data) => {
-      const bytes = this.encoder.encode(data);
-      this.send(bytes);
-      // keyboard broadcast: repeat the input in the other terminals of the same tab
-      for (const target of BaseSession.broadcastTargets(this.id)) {
-        if (target instanceof TerminalSession) target.injectInput(bytes);
+      // modifiers latched on the touch key bar apply to the next typed character
+      if (anyModifier(this.latched)) {
+        data = applyModifiersToText(data, this.latched);
+        this.consumeLatched();
       }
+      this.emitInput(data);
     });
     term.onBinary((data) => this.send(Uint8Array.from(data, (c) => c.charCodeAt(0) & 0xff)));
     term.onResize(({ cols, rows }) => this.sendControl({ type: 'resize', cols, rows }));
@@ -125,6 +134,41 @@ export class TerminalSession extends BaseSession {
 
   injectInput(bytes: Uint8Array): void {
     this.send(bytes);
+  }
+
+  /** Send typed input, mirrored to the other terminals of the tab when keyboard broadcast is on. */
+  private emitInput(data: string): void {
+    const bytes = this.encoder.encode(data);
+    this.send(bytes);
+    for (const target of BaseSession.broadcastTargets(this.id)) {
+      if (target instanceof TerminalSession) target.injectInput(bytes);
+    }
+  }
+
+  // ------------------------------------------------------------------ touch key bar
+
+  private latched: Modifiers = NO_MODIFIERS;
+  private onLatchedConsumed: (() => void) | null = null;
+
+  setLatchedModifiers(mods: Modifiers, onConsumed: () => void): void {
+    this.latched = mods;
+    this.onLatchedConsumed = onConsumed;
+  }
+
+  private consumeLatched(): void {
+    this.latched = NO_MODIFIERS;
+    const cb = this.onLatchedConsumed;
+    this.onLatchedConsumed = null;
+    cb?.();
+  }
+
+  sendSpecialKey(key: SpecialKey): void {
+    this.emitInput(terminalSequence(key, this.latched));
+    this.consumeLatched();
+  }
+
+  showKeyboard(): void {
+    this.term?.focus();
   }
 
   paste(text: string): void {

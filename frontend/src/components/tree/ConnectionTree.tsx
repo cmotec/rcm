@@ -1,5 +1,5 @@
 import { Check, ChevronDown, ChevronRight, FolderPlus, Plus, Search, SlidersHorizontal, Star, X } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { del, errorMessage, patch, post, put } from '../../api/client';
 import { hasPerm, useInvalidate, useMe, useTree } from '../../api/hooks';
 import type { Connection, Folder } from '../../api/types';
@@ -67,6 +67,29 @@ export function ConnectionTree({ actions, tapToOpen = false }: { actions: TreeAc
   const [selection, setSelection] = useState<Set<string>>(new Set());
   const [anchor, setAnchor] = useState<string | null>(null);
 
+  // Touch: long press (600 ms) edits the connection / folder.
+  const longPress = useRef<{ timer: number | null; fired: boolean }>({ timer: null, fired: false });
+  const cancelLongPress = () => {
+    if (longPress.current.timer !== null) window.clearTimeout(longPress.current.timer);
+    longPress.current.timer = null;
+  };
+  const startLongPress = (n: TreeNode) => {
+    cancelLongPress();
+    longPress.current.fired = false;
+    longPress.current.timer = window.setTimeout(() => {
+      longPress.current.fired = true;
+      navigator.vibrate?.(15);
+      const perm = n.type === 'folder' ? n.folder.permission : n.conn.permission;
+      if (!['edit', 'manage'].includes(perm ?? '')) {
+        dialogs.toast('You are not allowed to edit this entry', 'warning');
+      } else if (n.type === 'folder') {
+        actions.editFolder(n.folder);
+      } else {
+        actions.editConnection(n.conn);
+      }
+    }, 600);
+  };
+
   const nodes = useMemo(() => (tree ? filterTree(buildTree(tree), query) : []), [tree, query]);
   const favorites = useMemo(() => tree?.connections.filter((c) => c.favorite) ?? [], [tree]);
 
@@ -129,6 +152,10 @@ export function ConnectionTree({ actions, tapToOpen = false }: { actions: TreeAc
   // ------------------------------------------------------------------ multi-select
 
   const onRowClick = (e: React.MouseEvent, n: TreeNode) => {
+    if (longPress.current.fired) {
+      longPress.current.fired = false; // the click that ends a long press
+      return;
+    }
     const key = keyOf(n);
     if (e.shiftKey && anchor && visibleOrder.includes(anchor)) {
       const [a, b] = [visibleOrder.indexOf(anchor), visibleOrder.indexOf(key)].sort((x, y) => x - y);
@@ -259,6 +286,7 @@ export function ConnectionTree({ actions, tapToOpen = false }: { actions: TreeAc
     const onContext = (e: React.MouseEvent) => {
       e.preventDefault();
       e.stopPropagation();
+      if (tapToOpen) return; // touch: long press edits instead (see startLongPress)
       const key = keyOf(n);
       if (selection.has(key) && selection.size > 1) {
         dialogs.contextMenu(e.clientX, e.clientY, [
@@ -322,6 +350,10 @@ export function ConnectionTree({ actions, tapToOpen = false }: { actions: TreeAc
           onDragLeave={() => setDropId((d) => (d === n.id ? null : d))}
           onDrop={(e) => void onDropOn(e, n)}
           onClick={(e) => onRowClick(e, n)}
+          onTouchStart={() => startLongPress(n)}
+          onTouchMove={cancelLongPress}
+          onTouchEnd={cancelLongPress}
+          onTouchCancel={cancelLongPress}
           onDoubleClick={(e) => !e.ctrlKey && !e.metaKey && !e.shiftKey && n.type === 'connection' && open(n.conn)}
           onContextMenu={onContext}
           title={n.type === 'connection' ? undefined : n.folder.description ?? n.folder.name}

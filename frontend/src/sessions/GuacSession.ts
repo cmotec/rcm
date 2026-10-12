@@ -2,6 +2,7 @@ import { wsUrl } from '../api/client';
 import type { SessionInfo } from '../api/types';
 import { saveBlob } from '../util/download';
 import { BaseSession } from './base';
+import { MODIFIER_KEYSYMS, type Modifiers, type SpecialKey, type SpecialKeyTarget, specialKeysym } from './specialKeys';
 import Guacamole from './guac';
 import type { GuacTypes } from './guac';
 
@@ -10,6 +11,7 @@ const FATAL_CODES = new Set([0x0300, 0x0301, 0x0303, 0x0209]);
 // The remote side ended the session normally (logoff / disconnect): close the window.
 const ENDED_CODES = new Set([0x0000, 0x020b]);
 const RESIZE_DEBOUNCE_MS = 200;
+const MODIFIER_VALUES = new Set(Object.values(MODIFIER_KEYSYMS));
 
 export interface FileTransfer {
   id: string;
@@ -22,7 +24,7 @@ export interface FileTransfer {
 }
 
 /** RDP / VNC (and SSH via guacd) session rendered by guacamole-common-js. */
-export class GuacSession extends BaseSession {
+export class GuacSession extends BaseSession implements SpecialKeyTarget {
   private client: GuacTypes.Client | null = null;
   private keyboard: GuacTypes.Keyboard | null = null;
   private displayHost: HTMLDivElement;
@@ -131,9 +133,21 @@ export class GuacSession extends BaseSession {
       });
       mouse.on('mouseout', () => display.showCursor(false));
       if (window.matchMedia('(pointer: coarse)').matches) {
-        // Touch: tap = click, drag = move with the button held, two-finger tap = right click.
-        const touch = new Guacamole.Mouse.Touchscreen(displayEl);
-        touch.onEach(['mousedown', 'mousemove', 'mouseup'], (e) => {
+        // Touch, two modes (both devices listen; only the active mode sends):
+        // touchpad (default): drag moves the pointer, tap clicks at the pointer, two-finger drag scrolls,
+        //   two-finger tap = right click; the zoomed view follows the pointer.
+        // direct: tap clicks where you touch, drag = move with the button held.
+        const pad = new Guacamole.Mouse.Touchpad(displayEl);
+        pad.onEach(['mousedown', 'mousemove', 'mouseup'], (e) => {
+          if (this.pointerMode !== 'touchpad') return;
+          const state = (e as unknown as { state: GuacTypes.Mouse.State }).state;
+          display.showCursor(true);
+          client.sendMouseState(state, true);
+          this.followPointer(state.x, state.y);
+        });
+        const screen = new Guacamole.Mouse.Touchscreen(displayEl);
+        screen.onEach(['mousedown', 'mousemove', 'mouseup'], (e) => {
+          if (this.pointerMode !== 'touchscreen') return;
           client.sendMouseState((e as unknown as { state: GuacTypes.Mouse.State }).state, true);
         });
       }
@@ -150,6 +164,8 @@ export class GuacSession extends BaseSession {
       keyboard.onkeyup = (keysym) => {
         client.sendKeyEvent(0, keysym);
         this.mirrorKey(0, keysym);
+        // a key typed on the soft keyboard releases modifiers latched on the touch key bar
+        if (this.latchedKeysyms.size && !MODIFIER_VALUES.has(keysym)) this.releaseLatched();
       };
       this.keyboard = keyboard;
     }
@@ -278,10 +294,61 @@ export class GuacSession extends BaseSession {
     const w = this.element.clientWidth;
     const h = this.element.clientHeight;
     if (!dw || !dh || !w || !h) return;
-    const scale = Math.min(w / dw, h / dh);
+    const scale = Math.min(w / dw, h / dh) * this.zoom;
     display.scale(scale);
+    this.displayHost.classList.toggle('zoomed', this.zoom > 1);
     const serverResize = this.settings.server_resize !== false;
-    this.setDetail(`Remote ${dw}×${dh} · ${Math.round(scale * 100)} % ${serverResize ? '(auto-resize)' : '(scaled to fit)'}`);
+    this.setDetail(`Remote ${dw}×${dh} · ${Math.round(scale * 100)} % ${this.zoom > 1 ? `(zoom ${this.zoom.toFixed(1)}×)`
+      : serverResize ? '(auto-resize)' : '(scaled to fit)'}`);
+  }
+
+  // ------------------------------------------------------------------ touch: zoom & pointer mode
+
+  /** Zoom on top of "fit to window" (1 = fit). The remote resolution does not change. */
+  private zoom = 1;
+  pointerMode: 'touchpad' | 'touchscreen' =
+    localStorage.getItem('touch.pointer') === 'touchscreen' ? 'touchscreen' : 'touchpad';
+
+  setPointerMode(mode: 'touchpad' | 'touchscreen'): void {
+    this.pointerMode = mode;
+    localStorage.setItem('touch.pointer', mode);
+  }
+
+  setZoom(zoom: number): void {
+    const host = this.displayHost;
+    // keep the centre of the visible area in place while zooming
+    const cx = (host.scrollLeft + host.clientWidth / 2) / Math.max(1, host.scrollWidth);
+    const cy = (host.scrollTop + host.clientHeight / 2) / Math.max(1, host.scrollHeight);
+    this.zoom = Math.min(5, Math.max(1, zoom));
+    this.rescale();
+    host.scrollLeft = cx * host.scrollWidth - host.clientWidth / 2;
+    host.scrollTop = cy * host.scrollHeight - host.clientHeight / 2;
+  }
+
+  zoomIn(): void {
+    this.setZoom(this.zoom * 1.4);
+  }
+
+  zoomOut(): void {
+    this.setZoom(this.zoom / 1.4);
+  }
+
+  zoomReset(): void {
+    this.setZoom(1);
+  }
+
+  /** When zoomed in, scroll so the pointer stays visible (x/y in display-element pixels). */
+  private followPointer(x: number, y: number): void {
+    if (this.zoom <= 1) return;
+    const host = this.displayHost;
+    const el = host.firstElementChild as HTMLElement | null;
+    const px = (el?.offsetLeft ?? 0) + x;
+    const py = (el?.offsetTop ?? 0) + y;
+    const margin = 48;
+    if (px < host.scrollLeft + margin) host.scrollLeft = px - margin;
+    else if (px > host.scrollLeft + host.clientWidth - margin) host.scrollLeft = px - host.clientWidth + margin;
+    if (py < host.scrollTop + margin) host.scrollTop = py - margin;
+    else if (py > host.scrollTop + host.clientHeight - margin) host.scrollTop = py - host.clientHeight + margin;
   }
 
   // ------------------------------------------------------------------ clipboard & keys
@@ -303,6 +370,43 @@ export class GuacSession extends BaseSession {
     writer.sendText(text);
     writer.sendEnd();
     this.lastLocalClipboard = text;
+  }
+
+  // ------------------------------------------------------------------ touch key bar
+
+  private latchedKeysyms = new Set<number>();
+  private onLatchedConsumed: (() => void) | null = null;
+
+  /** Press the latched modifiers now; they are released after the next key. */
+  setLatchedModifiers(mods: Modifiers, onConsumed: () => void): void {
+    const wanted = new Set(
+      (Object.keys(MODIFIER_KEYSYMS) as (keyof Modifiers)[]).filter((k) => mods[k]).map((k) => MODIFIER_KEYSYMS[k]),
+    );
+    for (const k of this.latchedKeysyms) if (!wanted.has(k)) this.keyEvent(0, k);
+    for (const k of wanted) if (!this.latchedKeysyms.has(k)) this.keyEvent(1, k);
+    this.latchedKeysyms = wanted;
+    this.onLatchedConsumed = onConsumed;
+  }
+
+  private releaseLatched(): void {
+    for (const k of this.latchedKeysyms) this.keyEvent(0, k);
+    this.latchedKeysyms = new Set();
+    const cb = this.onLatchedConsumed;
+    this.onLatchedConsumed = null;
+    cb?.();
+  }
+
+  sendSpecialKey(key: SpecialKey): void {
+    const keysym = specialKeysym(key);
+    this.keyEvent(1, keysym);
+    this.keyEvent(0, keysym);
+    this.releaseLatched();
+  }
+
+  /** Key event to this session and, with keyboard broadcast on, to the other desktops of the tab. */
+  private keyEvent(pressed: 0 | 1, keysym: number): void {
+    this.injectKey(pressed, keysym);
+    this.mirrorKey(pressed, keysym);
   }
 
   /** Open the device's on-screen keyboard (phones/tablets). */
