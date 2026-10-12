@@ -35,7 +35,7 @@ from app.services.sessions import guacd_params
 from app.services.sessions.files.base import Transfer, clean_path
 from app.services.sessions.files.opener import open_fs
 from app.services.sessions.guac_tunnel import parse_client_info, run_guac_tunnel
-from app.services.sessions.launch import build_launch
+from app.services.sessions.launch import build_launch, user_keyboard_layout
 from app.services.sessions.manager import KIND_BY_PROTOCOL, Session, get_manager
 from app.services.sessions.ssh_native import HostKeyDecision, preflight
 from app.services.sessions.terminal import run_terminal
@@ -122,6 +122,10 @@ async def create_session(body: SessionCreate, request: Request, principal: Princ
                                          chosen_credential_id=body.credential_id, auth_override=override)
         if eff.credential_choice_required:
             raise CredentialChoiceRequired("choose the credential to connect with")
+        if launch.protocol == "rdp" and not launch.settings.server_layout:
+            layout = await user_keyboard_layout(db, principal.id)
+            if layout:  # the user's profile default; a layout set on the connection wins
+                launch.settings = launch.settings.model_copy(update={"server_layout": layout})
         if eff.prompt_required:
             raise CredentialsRequired(
                 "this connection asks for credentials when it is opened",

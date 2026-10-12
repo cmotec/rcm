@@ -1,0 +1,21 @@
+/** RDP keyboard layouts supported by guacd ("server-layout"); must match the layout set on the remote host. */
+export const KEYBOARD_LAYOUTS: { value: string; label: string }[] = [
+  { value: 'en-us-qwerty', label: 'English (US)' },
+  { value: 'en-gb-qwerty', label: 'English (UK)' },
+  { value: 'de-de-qwertz', label: 'German (Germany, Austria)' },
+  { value: 'de-ch-qwertz', label: 'German (Switzerland)' },
+  { value: 'fr-fr-azerty', label: 'French (France)' },
+  { value: 'fr-be-azerty', label: 'French (Belgium)' },
+  { value: 'fr-ch-qwertz', label: 'French (Switzerland)' },
+  { value: 'it-it-qwerty', label: 'Italian' },
+  { value: 'es-es-qwerty', label: 'Spanish (Spain)' },
+  { value: 'es-latam-qwerty', label: 'Spanish (Latin America)' },
+  { value: 'pt-br-qwerty', label: 'Portuguese (Brazil)' },
+  { value: 'da-dk-qwerty', label: 'Danish' },
+  { value: 'no-no-qwerty', label: 'Norwegian' },
+  { value: 'sv-se-qwerty', label: 'Swedish' },
+  { value: 'hu-hu-qwertz', label: 'Hungarian' },
+  { value: 'tr-tr-qwerty', label: 'Turkish (Q)' },
+  { value: 'ja-jp-qwerty', label: 'Japanese' },
+  { value: 'failsafe', label: 'Unicode fail-safe' },
+];

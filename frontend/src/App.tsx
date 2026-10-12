@@ -26,6 +26,7 @@ import { ConnectionDialog } from './components/dialogs/ConnectionDialog';
 import { FolderDialog } from './components/dialogs/FolderDialog';
 import { LoginPage } from './components/LoginPage';
 import { SignageView } from './components/SignageView';
+import { ProfileDialog } from './components/ProfileDialog';
 import { TokensDialog } from './components/TokensDialog';
 import { ConnectionTree } from './components/tree/ConnectionTree';
 import {
@@ -70,6 +71,7 @@ function Shell({ config }: { config: AuthConfig }) {
   const [folderDialog, setFolderDialog] = useState<{ folder?: Folder; parentId?: string | null } | null>(null);
   const [acl, setAcl] = useState<{ type: 'folder' | 'connection'; id: string; name: string } | null>(null);
   const [tokens, setTokens] = useState(false);
+  const [profile, setProfile] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(() => Number(localStorage.getItem('sidebar.width') ?? 300));
   const [restoreOffer, setRestoreOffer] = useState<number>(0);
   const isMobile = useMediaQuery(MOBILE_QUERY);
@@ -129,7 +131,8 @@ function Shell({ config }: { config: AuthConfig }) {
   const logout = async () => {
     if (sessionCount && !(await dialogs.confirm({ title: 'Sign out', message: 'Sign out? Open remote sessions keep running on the server until they time out; close them first if you want them ended.', confirmLabel: 'Sign out' }))) return;
     const r = await post<{ redirect: string | null }>('/api/v1/auth/logout').catch(() => ({ redirect: null }));
-    window.location.href = r.redirect ?? '/login';
+    // signed_out: the login page must not send an SSO-only user straight back to the IdP
+    window.location.href = r.redirect ?? '/login?signed_out=1';
   };
 
   const restore = async () => {
@@ -196,8 +199,9 @@ function Shell({ config }: { config: AuthConfig }) {
         )}
         <button className="icon-btn" title="Toggle theme" onClick={toggleTheme}>{theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}</button>
         <button className="icon-btn" title="API tokens" onClick={() => setTokens(true)}><Ticket size={16} /></button>
-        <span className="user" title={`${me?.display_name ?? me?.username ?? ''} (${me?.roles.join(', ') ?? ''})`}>
-          <UserRound size={15} /><span className="label">{me?.display_name ?? me?.username}</span></span>
+        <button className="user" title={`Profile: ${me?.display_name ?? me?.username ?? ''} (${me?.roles.join(', ') ?? ''})`}
+                onClick={() => setProfile(true)}>
+          <UserRound size={15} /><span className="label">{me?.display_name ?? me?.username}</span></button>
         <button className="icon-btn" title="Sign out" onClick={() => void logout()}><LogOut size={16} /></button>
       </header>
       {banner.data?.values.banner_message && <div className="banner info global">{banner.data.values.banner_message}</div>}
@@ -244,6 +248,7 @@ function Shell({ config }: { config: AuthConfig }) {
       {folderDialog && <FolderDialog {...folderDialog} onClose={() => setFolderDialog(null)} />}
       {acl && <AclDialog resourceType={acl.type} resourceId={acl.id} name={acl.name} onClose={() => setAcl(null)} />}
       {tokens && <TokensDialog onClose={() => setTokens(false)} />}
+      {profile && <ProfileDialog me={me} onClose={() => setProfile(false)} />}
     </div>
   );
 }

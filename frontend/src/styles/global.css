@@ -149,6 +149,11 @@ input[type='checkbox'], input[type='radio'] { accent-color: var(--accent); }
 .views button.active { background: var(--accent-soft); color: var(--accent); }
 .views .count { background: var(--accent); color: var(--accent-text); border-radius: 9px; padding: 0 6px; font-size: 11px; }
 .user { display: inline-flex; align-items: center; gap: 4px; color: var(--text-muted); margin: 0 4px; max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
+button.user { background: none; border: none; padding: 4px 6px; border-radius: 6px; cursor: pointer; font: inherit; }
+button.user:hover { background: var(--hover, rgba(127, 127, 127, 0.12)); color: var(--text); }
+.profile-facts { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 0 0 12px; }
+.profile-facts dt { color: var(--text-muted); }
+.profile-facts dd { margin: 0; overflow-wrap: anywhere; }
 .main { display: flex; flex: 1; min-height: 0; }
 .sidebar { flex: none; display: flex; flex-direction: column; background: var(--bg-elev); border-right: 1px solid var(--border); min-width: 0; }
 .sidebar-resizer { width: 4px; cursor: col-resize; flex: none; margin-left: -2px; z-index: 2; }

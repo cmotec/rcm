@@ -7,12 +7,14 @@ of a session.
 
 from __future__ import annotations
 
+import re
 import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app import models as m
 from app.config import Settings
 from app.errors import ValidationFailed
 from app.schemas.protocol_settings import parse_settings, security_warnings
@@ -53,6 +55,17 @@ class LaunchConfig:
 
     def __repr__(self) -> str:  # never print secrets
         return f"LaunchConfig({self.protocol}://{self.host}:{self.port}, connection={self.connection_id})"
+
+
+# guacd keymap names, e.g. "de-de-qwertz", "fr-ch-qwertz", "failsafe"
+_LAYOUT = re.compile(r"^(?:[a-z]{2}-[a-z]{2,5}-[a-z]{5,6}|failsafe)$")
+
+
+async def user_keyboard_layout(db: AsyncSession, user_id: uuid.UUID) -> str | None:
+    """The RDP keyboard layout the user chose in their profile (preference ``keyboard_layout``)."""
+    pref = await db.get(m.UserPreference, user_id)
+    value = (pref.data or {}).get("keyboard_layout") if pref else None
+    return value if isinstance(value, str) and _LAYOUT.match(value) else None
 
 
 async def build_launch(
