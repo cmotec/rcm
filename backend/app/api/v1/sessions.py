@@ -47,6 +47,10 @@ class CredentialsRequired(AppError):
     status, code, title = 428, "credentials_required", "Credentials required"
 
 
+class CredentialChoiceRequired(AppError):
+    status, code, title = 428, "credential_choice_required", "Choose a credential"
+
+
 async def principal_detached(request: Request, settings: Settings = Depends(settings_dep)) -> Principal:
     """Authenticate without holding a DB connection for the request (long-running transfers)."""
     async with session_scope() as db:
@@ -83,6 +87,12 @@ async def create_session(body: SessionCreate, request: Request, principal: Princ
                                     resource_type="connection", resource_id=body.connection_id, outcome="denied")
         raise Forbidden("'connect' permission required")
     manager.check_capacity(principal.id)
+    if body.credential_id is not None:
+        # the user may only pick credentials they are allowed to use
+        if not access.can("credential", body.credential_id, "view"):
+            raise NotFound("credential not found")
+        if not access.can("credential", body.credential_id, "connect"):
+            raise Forbidden("you may not use this credential ('connect' permission required)")
     interactive = body.credentials.model_dump(exclude_none=True) if body.credentials else None
     decision = HostKeyDecision(
         accepted={f"{k.hostname}:{k.port}": k.fingerprint for k in body.accept_host_keys},
@@ -93,7 +103,10 @@ async def create_session(body: SessionCreate, request: Request, principal: Princ
     async with session_scope() as db:
         runtime = await get_runtime(db, settings)
         launch, eff = await build_launch(db, body.connection_id, settings=settings, runtime=runtime,
-                                         box=get_box(), interactive=interactive)
+                                         box=get_box(), interactive=interactive,
+                                         chosen_credential_id=body.credential_id)
+        if eff.credential_choice_required:
+            raise CredentialChoiceRequired("choose the credential to connect with")
         if eff.prompt_required:
             raise CredentialsRequired(
                 "this connection asks for credentials when it is opened",
@@ -140,6 +153,7 @@ async def create_session(body: SessionCreate, request: Request, principal: Princ
         resource_id=launch.connection_id, outcome="success",
         details={"session_id": str(session.id), "protocol": launch.protocol, "host": launch.host,
                  "port": launch.port, "auth_sources": {k: v["kind"] for k, v in launch.auth_sources.items()},
+                 "chosen_credential_id": str(body.credential_id) if body.credential_id else None,
                  "warnings": [w["code"] for w in launch.warnings]},
     )
     return _out(session, ticket)

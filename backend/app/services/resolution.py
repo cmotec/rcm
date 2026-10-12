@@ -82,6 +82,13 @@ class EffectiveConnection:
     auth: dict[str, Resolved] = field(default_factory=dict)
     interactive_connection_id: uuid.UUID | None = None
     interactive_supplied: bool = False
+    # auth_mode "credential" without a pinned credential: the user picks one at connect time
+    credential_choice_connection_id: uuid.UUID | None = None
+    chosen_credential_id: uuid.UUID | None = None
+
+    @property
+    def credential_choice_required(self) -> bool:
+        return self.credential_choice_connection_id is not None and self.chosen_credential_id is None
 
     @property
     def protocol(self) -> str:
@@ -116,6 +123,7 @@ class EffectiveConnection:
             "auth_mode": self.connection.auth_mode,
             "auth": {k: v.public(secret=k in SECRET_AUTH_FIELDS) for k, v in self.auth.items()},
             "prompt_required": self.prompt_required,
+            "credential_choice_required": self.credential_choice_connection_id is not None,
             "interactive_connection_id": (
                 str(self.interactive_connection_id) if self.interactive_connection_id else None
             ),
@@ -249,6 +257,7 @@ def _connection_own(
     credentials: dict[uuid.UUID, list[m.Credential]],
     box: SecretBox | None,
     include_secrets: bool,
+    chosen_credential_id: uuid.UUID | None = None,
 ) -> dict[str, Resolved]:
     src = Source("connection", str(conn.id), conn.name)
     vals: dict[str, Resolved] = {}
@@ -264,8 +273,11 @@ def _connection_own(
                 else None
             )
             vals["password"] = Resolved(value, src)
-    elif conn.auth_mode == "credential" and conn.credential_id:
-        vals.update(credential_values(credentials.get(conn.credential_id, []), box, include_secrets=include_secrets))
+    elif conn.auth_mode == "credential":
+        # pinned credential, or (when none is pinned) the one the user chose at connect time
+        cred_id = conn.credential_id or chosen_credential_id
+        if cred_id:
+            vals.update(credential_values(credentials.get(cred_id, []), box, include_secrets=include_secrets))
     return vals
 
 
@@ -280,12 +292,15 @@ async def resolve_connection(
     include_secrets: bool,
     env_search_domains: list[str],
     interactive: dict[str, str] | None = None,
+    chosen_credential_id: uuid.UUID | None = None,
 ) -> EffectiveConnection:
     chain = await load_connection_chain(db, connection_id)
     credentials: dict[uuid.UUID, list[m.Credential]] = {}
     for conn in chain:
         if conn.auth_mode == "credential" and conn.credential_id and conn.credential_id not in credentials:
             credentials[conn.credential_id] = await load_credential_chain(db, conn.credential_id)
+    if chosen_credential_id and chosen_credential_id not in credentials:
+        credentials[chosen_credential_id] = await load_credential_chain(db, chosen_credential_id)
     top = chain[-1]
     folders = await load_folder_chain(db, top.folder_id)
     return compute_effective(
@@ -296,6 +311,7 @@ async def resolve_connection(
         include_secrets=include_secrets,
         env_search_domains=env_search_domains,
         interactive=interactive,
+        chosen_credential_id=chosen_credential_id,
     )
 
 
@@ -308,6 +324,7 @@ def compute_effective(
     include_secrets: bool,
     env_search_domains: list[str],
     interactive: dict[str, str] | None = None,
+    chosen_credential_id: uuid.UUID | None = None,
 ) -> EffectiveConnection:
     conn = chain[0]
 
@@ -343,9 +360,14 @@ def compute_effective(
     # credentials ---------------------------------------------------------------
     auth: dict[str, Resolved] = {}
     interactive_conn: uuid.UUID | None = None
+    choice_conn: uuid.UUID | None = None
     interactive = {k: v for k, v in (interactive or {}).items() if k in AUTH_FIELDS and v}
     for idx, c in enumerate(chain):
-        own = _connection_own(c, credentials, box, include_secrets)
+        choose_here = c.auth_mode == "credential" and not c.credential_id and choice_conn is None
+        if choose_here:
+            choice_conn = c.id
+        own = _connection_own(c, credentials, box, include_secrets,
+                              chosen_credential_id if choose_here else None)
         if c.auth_mode == "interactive" and interactive_conn is None:
             interactive_conn = c.id
             for k, v in interactive.items():
@@ -366,4 +388,6 @@ def compute_effective(
         auth=auth,
         interactive_connection_id=interactive_conn,
         interactive_supplied=bool(interactive),
+        credential_choice_connection_id=choice_conn,
+        chosen_credential_id=chosen_credential_id if choice_conn else None,
     )

@@ -23,7 +23,8 @@ export type DialogRequest =
       resolve: (value: string | null) => void }
   | { id: number; kind: 'credentials'; connectionName: string; protocol: Protocol; fields: string[];
       username?: string | null; domain?: string | null; resolve: (v: InteractiveCredentials | null) => void }
-  | { id: number; kind: 'hostkey'; info: HostKeyInfo; changed: boolean; resolve: (accept: boolean) => void };
+  | { id: number; kind: 'hostkey'; info: HostKeyInfo; changed: boolean; resolve: (accept: boolean) => void }
+  | { id: number; kind: 'choose-credential'; connectionName: string; resolve: (credentialId: string | null) => void };
 
 export interface Toast {
   id: number;
@@ -66,6 +67,7 @@ export const dialogs = {
   credentials: (o: { connectionName: string; protocol: Protocol; fields: string[]; username?: string | null;
     domain?: string | null }) => enqueue<InteractiveCredentials | null>({ kind: 'credentials', ...o }),
   hostKey: (info: HostKeyInfo, changed: boolean) => enqueue<boolean>({ kind: 'hostkey', info, changed }),
+  chooseCredential: (connectionName: string) => enqueue<string | null>({ kind: 'choose-credential', connectionName }),
   contextMenu: (x: number, y: number, items: MenuItem[]) => useDialogStore.setState({ menu: { x, y, items } }),
   closeMenu: () => useDialogStore.setState({ menu: null }),
   toast: (message: string, kind: Toast['kind'] = 'info') => {

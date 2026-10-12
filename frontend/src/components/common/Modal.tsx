@@ -12,14 +12,20 @@ interface ModalProps {
 
 export function Modal({ title, onClose, children, footer, width = 520, className }: ModalProps) {
   const ref = useRef<HTMLDivElement>(null);
+  // Callers pass inline arrow functions; keep the latest one in a ref so the effect below runs
+  // only when the dialog opens. (Re-running it on every render stole focus after each keystroke.)
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
   useEffect(() => {
     const prev = document.activeElement as HTMLElement | null;
-    const first = ref.current?.querySelector<HTMLElement>('input, select, textarea, button.primary');
-    first?.focus();
+    // Respect an autoFocus field inside the dialog; otherwise focus the first control.
+    if (!ref.current?.contains(document.activeElement)) {
+      ref.current?.querySelector<HTMLElement>('input, select, textarea, button.primary')?.focus();
+    }
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.stopPropagation();
-        onClose();
+        onCloseRef.current();
       }
     };
     window.addEventListener('keydown', onKey, true);
@@ -27,7 +33,7 @@ export function Modal({ title, onClose, children, footer, width = 520, className
       window.removeEventListener('keydown', onKey, true);
       prev?.focus?.();
     };
-  }, [onClose]);
+  }, []);
   return (
     <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div ref={ref} className={`modal ${className ?? ''}`} style={{ width }} role="dialog" aria-modal="true">

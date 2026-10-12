@@ -63,6 +63,7 @@ async def build_launch(
     runtime: RuntimeSettings,
     box: SecretBox,
     interactive: dict[str, str] | None = None,
+    chosen_credential_id: uuid.UUID | None = None,
     _depth: int = 0,
 ) -> tuple[LaunchConfig, EffectiveConnection]:
     if _depth > 3:
@@ -74,6 +75,7 @@ async def build_launch(
         include_secrets=True,
         env_search_domains=settings.search_domains,
         interactive=interactive,
+        chosen_credential_id=chosen_credential_id,
     )
     conn = eff.connection
     if conn.protocol not in LAUNCHABLE:

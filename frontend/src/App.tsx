@@ -91,6 +91,15 @@ function Shell({ config }: { config: AuthConfig }) {
   // Subscribe/unsubscribe symmetrically (StrictMode runs effects twice in development).
   useEffect(() => startLayoutPersistence(), []);
 
+  // The details panel gives the workspace room while connected: hide it when a session opens,
+  // show it again once all sessions are closed. The toolbar toggle still works in between.
+  const prevSessionCount = useRef(sessionCount);
+  useEffect(() => {
+    if (sessionCount > prevSessionCount.current) setShowDetails(false);
+    else if (sessionCount === 0 && prevSessionCount.current > 0) setShowDetails(true);
+    prevSessionCount.current = sessionCount;
+  }, [sessionCount]);
+
   // keep the selected connection fresh after tree reloads
   useEffect(() => {
     if (selected && tree) setSelected(tree.connections.find((c) => c.id === selected.id) ?? null);

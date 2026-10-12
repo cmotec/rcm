@@ -241,7 +241,7 @@ Fields: `username`, `password`, `domain`, `private_key`, `passphrase`.
 |---|---|
 | `inherit` (default) | none of its own |
 | `direct` | `username`, `password`, `domain` stored on the connection |
-| `credential` | the referenced credential entry (including that entry's own parent chain) |
+| `credential` | the referenced credential entry (including that entry's own parent chain). If no entry is pinned, the user picks one of the credentials they may use (*connect* permission) when opening the connection |
 | `interactive` | entered by the user at launch, kept in memory only for the session's lifetime |
 
 For each field the first non-empty value wins, in this order:

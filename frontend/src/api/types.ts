@@ -119,6 +119,7 @@ export interface EffectiveConnection {
   auth_mode: AuthMode;
   auth: Partial<Record<'username' | 'password' | 'domain' | 'private_key' | 'passphrase', ResolvedValue<string>>>;
   prompt_required: boolean;
+  credential_choice_required: boolean;
   interactive_connection_id: string | null;
   chain: { id: string; name: string; protocol: Protocol }[];
 }

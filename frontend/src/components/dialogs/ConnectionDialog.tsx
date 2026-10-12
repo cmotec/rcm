@@ -17,7 +17,7 @@ interface Props {
 const AUTH_MODES: { value: AuthMode; label: string; help: string }[] = [
   { value: 'inherit', label: 'Inherit', help: 'Use the credentials of the parent connection.' },
   { value: 'direct', label: 'Connection-specific', help: 'Username, password and domain stored on this connection.' },
-  { value: 'credential', label: 'Credential store', help: 'Reference an entry from the credential store.' },
+  { value: 'credential', label: 'Credential store', help: 'A fixed entry from the credential store, or let the user pick one when connecting.' },
   { value: 'interactive', label: 'Ask when connecting', help: 'Prompt for username and password; nothing is stored.' },
 ];
 
@@ -297,8 +297,12 @@ export function ConnectionDialog({ connection, placement, onClose }: Props) {
           )}
           {authMode === 'credential' && (
             <label className="field"><span>Credential entry</span>
+              <small className="muted">
+                {credentialId ? 'Pinned: the connection always starts with this credential.'
+                  : 'Not pinned: when connecting, users pick from the credentials they are allowed to use.'}
+              </small>
               <select value={credentialId} onChange={(e) => setCredentialId(e.target.value)}>
-                <option value="">— choose —</option>
+                <option value="">Let the user choose when connecting</option>
                 {(creds?.items ?? []).filter((c) => ['connect', 'edit', 'manage'].includes(c.permission ?? '')).map((c) => (
                   <option key={c.id} value={c.id}>{c.name}{c.username ? ` (${c.domain ? `${c.domain}\\` : ''}${c.username})` : ''}</option>
                 ))}

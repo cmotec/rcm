@@ -1,5 +1,6 @@
 import { ShieldAlert, TriangleAlert } from 'lucide-react';
 import { useEffect, useState } from 'react';
+import { useCredentials } from '../../api/hooks';
 import { type DialogRequest, type InteractiveCredentials, useDialogStore } from '../../state/dialogs';
 import { Modal } from './Modal';
 
@@ -107,6 +108,38 @@ function HostKeyDialog({ req }: { req: Extract<DialogRequest, { kind: 'hostkey' 
   );
 }
 
+function ChooseCredentialDialog({ req }: { req: Extract<DialogRequest, { kind: 'choose-credential' }> }) {
+  const { data, isLoading } = useCredentials();
+  const [filter, setFilter] = useState('');
+  // only credentials the user may use (connect or higher)
+  const usable = (data?.items ?? []).filter((c) => ['connect', 'edit', 'manage'].includes(c.permission ?? ''));
+  const shown = usable.filter((c) => !filter || `${c.name} ${c.username ?? ''} ${c.domain ?? ''}`.toLowerCase().includes(filter.toLowerCase()));
+  const [selected, setSelected] = useState<string | null>(null);
+  return (
+    <Modal title={`Connect to ${req.connectionName}`} onClose={() => req.resolve(null)} width={480}
+           footer={<>
+             <button onClick={() => req.resolve(null)}>Cancel</button>
+             <button className="primary" disabled={!selected} onClick={() => req.resolve(selected)}>Connect</button>
+           </>}>
+      <p className="muted">Choose the credential to use for this session.</p>
+      {usable.length > 6 && (
+        <input placeholder="Filter…" value={filter} onChange={(e) => setFilter(e.target.value)} autoFocus />
+      )}
+      {isLoading && <p className="muted">Loading…</p>}
+      {!isLoading && !usable.length && <p className="banner warn">You have no credentials you are allowed to use.</p>}
+      <ul className="choice-list" role="listbox">
+        {shown.map((c) => (
+          <li key={c.id} role="option" aria-selected={selected === c.id} className={selected === c.id ? 'active' : ''}
+              onClick={() => setSelected(c.id)} onDoubleClick={() => req.resolve(c.id)}>
+            <b>{c.name}</b>
+            <span className="muted">{c.domain ? `${c.domain}\\` : ''}{c.username ?? ''}</span>
+          </li>
+        ))}
+      </ul>
+    </Modal>
+  );
+}
+
 function ContextMenu() {
   const menu = useDialogStore((s) => s.menu);
   useEffect(() => {
@@ -166,6 +199,7 @@ export function DialogHost() {
       {req?.kind === 'prompt' && <PromptDialog key={req.id} req={req} />}
       {req?.kind === 'credentials' && <CredentialsDialog key={req.id} req={req} />}
       {req?.kind === 'hostkey' && <HostKeyDialog key={req.id} req={req} />}
+      {req?.kind === 'choose-credential' && <ChooseCredentialDialog key={req.id} req={req} />}
       <ContextMenu />
       <Toasts />
     </>

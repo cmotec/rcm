@@ -70,7 +70,7 @@ The complete, generated specification is in [openapi.json](openapi.json)
 ### Sessions
 | Method | Path | Description |
 |---|---|---|
-| POST | `/sessions` | start a session. `428 credentials_required` → resend with `credentials`. `409 hostkey_unknown/hostkey_changed` (body has `host_key`) → resend with `accept_host_keys` |
+| POST | `/sessions` | start a session. `428 credentials_required` → resend with `credentials`. `428 credential_choice_required` → resend with `credential_id` (a credential the user may use). `409 hostkey_unknown/hostkey_changed` (body has `host_key`) → resend with `accept_host_keys` |
 | GET | `/sessions[?scope=all]` | my sessions (or all, with `sessions.manage`) |
 | GET | `/sessions/{id}` | status |
 | POST | `/sessions/{id}/reconnect` | new one-time ticket (RDP/VNC/SSH) or reopen (file sessions) |

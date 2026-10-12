@@ -38,7 +38,8 @@ export function DetailsPanel({ connection, onClose, onEdit }: { connection: Conn
         {eff && eff.hostname_candidates.length > 1 && <><dt>Resolves as</dt><dd className="small">{eff.hostname_candidates.join(' → ')}</dd></>}
         <dt>Port</dt><dd>{eff?.port?.value ?? '—'} <Source r={eff?.port} /></dd>
         {eff?.search_domains && <><dt>Search domain</dt><dd>{eff.search_domains.value?.join(', ')} <Source r={eff.search_domains} /></dd></>}
-        <dt>Authentication</dt><dd>{connection.auth_mode}{eff?.prompt_required ? ' (asks at connect)' : ''}</dd>
+        <dt>Authentication</dt><dd>{connection.auth_mode}{eff?.prompt_required ? ' (asks at connect)' : ''}
+          {eff?.credential_choice_required ? ' (credential chosen at connect)' : ''}</dd>
         <dt>Username</dt><dd>{auth.username?.value ?? <span className="muted">—</span>} <Source r={auth.username} /></dd>
         <dt>Password</dt><dd>{auth.password?.set ? '••••••' : <span className="muted">—</span>} <Source r={auth.password} /></dd>
         {auth.domain && <><dt>Domain</dt><dd>{auth.domain.value} <Source r={auth.domain} /></dd></>}

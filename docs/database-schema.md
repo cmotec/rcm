@@ -35,7 +35,7 @@ known_hosts · audit_events · session_records · app_settings · import_jobs ·
 | `web_sessions` | browser sessions | `id` = SHA-256 of cookie; `expires_at`, `last_seen_at` (idle), `csrf_token` |
 | `api_tokens` | personal access tokens | `token_hash` unique, `read_only`, `expires_at`, `revoked_at` |
 | `folders` | hierarchy | `parent_id` (RESTRICT), `icon`, `color`, `search_domain`, `version` |
-| `connections` | connection definitions and host nodes | `protocol` ∈ host/ssh/sftp/rdp/vnc/ftp/ftps; `folder_id` **xor** `parent_id`; `auth_mode` ∈ inherit/direct/credential/interactive; `inherit_auth`; `password_enc`; `credential_id`; `search_domain`; `tags text[]` (GIN index); `settings jsonb` (validated per protocol); `import_source jsonb` |
+| `connections` | connection definitions and host nodes | `protocol` ∈ host/ssh/sftp/rdp/vnc/ftp/ftps; `folder_id` **xor** `parent_id`; `auth_mode` ∈ inherit/direct/credential/interactive (credential without `credential_id` = chosen at connect time); `inherit_auth`; `password_enc`; `credential_id`; `search_domain`; `tags text[]` (GIN index); `settings jsonb` (validated per protocol); `import_source jsonb` |
 | `credentials` | credential store | all fields optional; `password_enc`, `private_key_enc`, `passphrase_enc`; `parent_id` inheritance; `metadata jsonb`; `rotation_interval_days`, `secret_changed_at` |
 | `acl_entries` | resource grants | `resource_type` ∈ folder/connection/credential (all-zero UUID = root); `principal_type` ∈ user/group/role; `permission` ∈ view/connect/edit/manage; unique per (resource, principal) |
 | `known_hosts` | trusted SSH host keys | unique (hostname, port, key_type); `fingerprint` (SHA256), `public_key` |
@@ -54,7 +54,6 @@ known_hosts · audit_events · session_records · app_settings · import_jobs ·
 * No item can be its own parent (folders, connections, credentials). Deeper cycles are rejected
   by the API (`would_create_cycle`).
 * A connection lives either in a folder or under a parent connection, never both.
-* `auth_mode = 'credential'` requires `credential_id`.
 * Deleting a credential, folder or parent that is still referenced fails (`RESTRICT`). The API
   reports what references it.
 * Port range 1–65535.

@@ -47,6 +47,7 @@ interface ConnectionRef {
  */
 export async function openConnection(conn: ConnectionRef, target: OpenTarget = {}): Promise<string | null> {
   let credentials: InteractiveCredentials | undefined;
+  let credentialId: string | undefined;
   const accepted: { hostname: string; port: number; fingerprint: string }[] = [];
   let info: SessionInfo | null = null;
   for (let attempt = 0; attempt < 8 && !info; attempt++) {
@@ -54,9 +55,16 @@ export async function openConnection(conn: ConnectionRef, target: OpenTarget = {
       info = await post<SessionInfo>('/api/v1/sessions', {
         connection_id: conn.id,
         credentials,
+        credential_id: credentialId,
         accept_host_keys: accepted,
       });
     } catch (err) {
+      if (err instanceof ApiError && err.code === 'credential_choice_required') {
+        const chosen = await dialogs.chooseCredential(conn.name);
+        if (!chosen) return null;
+        credentialId = chosen;
+        continue;
+      }
       if (err instanceof ApiError && err.code === 'credentials_required') {
         const p = err.problem as unknown as { fields: string[]; username?: string; domain?: string };
         const entered = await dialogs.credentials({

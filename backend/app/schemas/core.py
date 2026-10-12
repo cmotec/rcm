@@ -406,6 +406,8 @@ class AcceptedHostKey(Strict):
 class SessionCreate(Strict):
     connection_id: uuid.UUID
     credentials: InteractiveCredentials | None = None
+    credential_id: uuid.UUID | None = Field(
+        None, description="credential chosen at connect time (connections in credential mode without a pinned credential)")
     accept_host_keys: list[AcceptedHostKey] = Field(default_factory=list, max_length=4)
 
 

@@ -216,7 +216,6 @@ class Connection(TimestampMixin, Base):
         CheckConstraint("port IS NULL OR (port BETWEEN 1 AND 65535)", name="port_range"),
         CheckConstraint("NOT (parent_id IS NOT NULL AND folder_id IS NOT NULL)", name="single_container"),
         CheckConstraint("parent_id IS NULL OR parent_id <> id", name="not_own_parent"),
-        CheckConstraint("auth_mode <> 'credential' OR credential_id IS NOT NULL", name="credential_ref"),
         Index("ix_connections_folder", "folder_id"),
         Index("ix_connections_parent", "parent_id"),
         Index("ix_connections_credential", "credential_id"),

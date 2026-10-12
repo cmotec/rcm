@@ -23,6 +23,8 @@ export interface TreeActions {
   selectedId: string | null;
 }
 
+const keyOf = (n: TreeNode) => `${n.type}:${n.id}`;
+
 function loadExpanded(): Set<string> {
   try {
     return new Set(JSON.parse(localStorage.getItem('tree.expanded') ?? '[]') as string[]);
@@ -40,8 +42,24 @@ export function ConnectionTree({ actions }: { actions: TreeActions }) {
   const [dropId, setDropId] = useState<string | null>(null);
   const focusedSession = useWorkspace((s) => s.layout.focusedSessionId);
 
+  const [selection, setSelection] = useState<Set<string>>(new Set());
+  const [anchor, setAnchor] = useState<string | null>(null);
+
   const nodes = useMemo(() => (tree ? filterTree(buildTree(tree), query) : []), [tree, query]);
   const favorites = useMemo(() => tree?.connections.filter((c) => c.favorite) ?? [], [tree]);
+
+  // Rows in display order (for Shift+click ranges and Ctrl+A).
+  const visibleOrder = useMemo(() => {
+    const out: string[] = [];
+    const walk = (list: TreeNode[]) => {
+      for (const n of list) {
+        out.push(keyOf(n));
+        if (n.children.length && (query || expanded.has(n.id))) walk(n.children);
+      }
+    };
+    walk(nodes);
+    return out;
+  }, [nodes, expanded, query]);
 
   const toggle = (id: string) => {
     setExpanded((s) => {
@@ -85,6 +103,109 @@ export function ConnectionTree({ actions }: { actions: TreeActions }) {
     if (ok) await run(() => del(`/api/v1/folders/${f.id}`, { recursive: hasChildren }), 'Folder deleted');
   };
 
+  // ------------------------------------------------------------------ multi-select
+
+  const onRowClick = (e: React.MouseEvent, n: TreeNode) => {
+    const key = keyOf(n);
+    if (e.shiftKey && anchor && visibleOrder.includes(anchor)) {
+      const [a, b] = [visibleOrder.indexOf(anchor), visibleOrder.indexOf(key)].sort((x, y) => x - y);
+      const range = visibleOrder.slice(a, b + 1);
+      setSelection((s) => new Set(e.ctrlKey || e.metaKey ? [...s, ...range] : range));
+      return;
+    }
+    if (e.ctrlKey || e.metaKey) {
+      setSelection((s) => {
+        const next = new Set(s);
+        if (next.has(key)) next.delete(key);
+        else next.add(key);
+        return next;
+      });
+      setAnchor(key);
+      return;
+    }
+    setSelection(new Set([key]));
+    setAnchor(key);
+    if (n.type === 'folder') toggle(n.id);
+    else actions.select(n.conn);
+  };
+
+  /** Delete the given rows. Items below another selected item are skipped (deleted with their parent). */
+  const deleteMany = async (keys: string[]) => {
+    if (!tree) return;
+    const folders = new Map(tree.folders.map((f) => [f.id, f]));
+    const conns = new Map(tree.connections.map((c) => [c.id, c]));
+    const chosen = new Set(keys);
+    const ancestors = (key: string): string[] => {
+      const out: string[] = [];
+      const [type, id] = key.split(':');
+      let folderId: string | null = null;
+      if (type === 'connection') {
+        let c = conns.get(id);
+        while (c?.parent_id) {
+          out.push(`connection:${c.parent_id}`);
+          c = conns.get(c.parent_id);
+        }
+        folderId = c?.folder_id ?? null;
+      } else {
+        folderId = folders.get(id)?.parent_id ?? null;
+      }
+      while (folderId) {
+        out.push(`folder:${folderId}`);
+        folderId = folders.get(folderId)?.parent_id ?? null;
+      }
+      return out;
+    };
+    const roots = keys.filter((k) => !ancestors(k).some((a) => chosen.has(a)));
+    const permitted = roots.filter((k) => {
+      const [type, id] = k.split(':');
+      return (type === 'folder' ? folders.get(id)?.permission : conns.get(id)?.permission) === 'manage';
+    });
+    const denied = roots.length - permitted.length;
+    if (!permitted.length) {
+      dialogs.toast('You are not allowed to delete the selected items', 'error');
+      return;
+    }
+    const nFolders = permitted.filter((k) => k.startsWith('folder:')).length;
+    const nConns = permitted.length - nFolders;
+    const parts = [nFolders && `${nFolders} folder(s)`, nConns && `${nConns} connection(s)`].filter(Boolean).join(' and ');
+    const ok = await dialogs.confirm({
+      title: 'Delete selected items',
+      danger: true,
+      confirmLabel: `Delete ${permitted.length}`,
+      message: `Delete ${parts}, including everything inside them?${denied ? ` ${denied} item(s) you may not delete will be skipped.` : ''}`,
+    });
+    if (!ok) return;
+    const failures: string[] = [];
+    // connections first: a folder delete would otherwise remove them and make their own delete fail
+    for (const k of [...permitted].sort((a, b) => Number(a.startsWith('folder:')) - Number(b.startsWith('folder:')))) {
+      const [type, id] = k.split(':');
+      const name = type === 'folder' ? folders.get(id)?.name : conns.get(id)?.name;
+      try {
+        await del(`/api/v1/${type === 'folder' ? 'folders' : 'connections'}/${id}`, { recursive: true });
+      } catch (err) {
+        failures.push(`${name}: ${errorMessage(err)}`);
+      }
+    }
+    setSelection(new Set());
+    invalidate.tree();
+    const deleted = permitted.length - failures.length;
+    if (deleted) dialogs.toast(`Deleted ${deleted} item(s)`, 'success');
+    if (failures.length) dialogs.toast(`Could not delete: ${failures.join('; ')}`, 'error');
+  };
+
+  const onTreeKeyDown = (e: React.KeyboardEvent) => {
+    if ((e.target as HTMLElement).tagName === 'INPUT') return;
+    if ((e.key === 'Delete' || (e.key === 'Backspace' && e.metaKey)) && selection.size) {
+      e.preventDefault();
+      void deleteMany([...selection]);
+    } else if (e.key === 'Escape') {
+      setSelection(new Set());
+    } else if (e.key.toLowerCase() === 'a' && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault();
+      setSelection(new Set(visibleOrder));
+    }
+  };
+
   const onDropOn = async (e: React.DragEvent, target: TreeNode | null) => {
     e.preventDefault();
     e.stopPropagation();
@@ -114,6 +235,16 @@ export function ConnectionTree({ actions }: { actions: TreeActions }) {
     const onContext = (e: React.MouseEvent) => {
       e.preventDefault();
       e.stopPropagation();
+      const key = keyOf(n);
+      if (selection.has(key) && selection.size > 1) {
+        dialogs.contextMenu(e.clientX, e.clientY, [
+          { label: `Delete ${selection.size} selected items…`, danger: true, action: () => void deleteMany([...selection]) },
+          { label: 'Clear selection', action: () => setSelection(new Set()) },
+        ]);
+        return;
+      }
+      setSelection(new Set([key]));
+      setAnchor(key);
       if (n.type === 'folder') {
         dialogs.contextMenu(e.clientX, e.clientY, [
           { label: 'New connection here', disabled: !editable || !canCreateConn, action: () => actions.newConnection({ folderId: n.id }) },
@@ -149,7 +280,8 @@ export function ConnectionTree({ actions }: { actions: TreeActions }) {
     return (
       <li key={n.id} role="treeitem" aria-expanded={hasChildren ? isOpen : undefined}>
         <div
-          className={`tree-row ${dropId === n.id ? 'drop' : ''} ${n.type === 'connection' && actions.selectedId === n.id ? 'selected' : ''}`}
+          className={`tree-row ${dropId === n.id ? 'drop' : ''} ${selection.has(keyOf(n)) ? 'selected' : ''}`}
+          aria-selected={selection.has(keyOf(n))}
           style={{ paddingLeft: 6 + depth * 14 }}
           draggable
           onDragStart={(e) => {
@@ -165,10 +297,10 @@ export function ConnectionTree({ actions }: { actions: TreeActions }) {
           }}
           onDragLeave={() => setDropId((d) => (d === n.id ? null : d))}
           onDrop={(e) => void onDropOn(e, n)}
-          onClick={() => (n.type === 'folder' ? toggle(n.id) : actions.select(n.conn))}
-          onDoubleClick={() => n.type === 'connection' && open(n.conn)}
+          onClick={(e) => onRowClick(e, n)}
+          onDoubleClick={(e) => !e.ctrlKey && !e.metaKey && !e.shiftKey && n.type === 'connection' && open(n.conn)}
           onContextMenu={onContext}
-          title={n.type === 'connection' ? `${n.conn.name}${n.conn.hostname ? ` — ${n.conn.hostname}` : ''}` : n.folder.description ?? n.folder.name}
+          title={n.type === 'connection' ? n.conn.name : n.folder.description ?? n.folder.name}
         >
           <span className="twisty" onClick={(e) => { e.stopPropagation(); if (hasChildren) toggle(n.id); }}>
             {hasChildren ? (isOpen ? <ChevronDown size={13} /> : <ChevronRight size={13} />) : null}
@@ -182,7 +314,7 @@ export function ConnectionTree({ actions }: { actions: TreeActions }) {
             <>
               <ProtocolIcon protocol={n.conn.protocol} />
               <span className="tree-name">{n.conn.name}</span>
-              {n.conn.hostname && <span className="tree-host">{n.conn.hostname}</span>}
+              <span className="spacer" />
               {n.conn.warnings.length > 0 && (
                 <span title={n.conn.warnings.map((w) => w.message).join('\n')}><ShieldAlert size={12} className="warn-icon" /></span>
               )}
@@ -217,7 +349,6 @@ export function ConnectionTree({ actions }: { actions: TreeActions }) {
                      draggable onDragStart={(e) => e.dataTransfer.setData(CONNECTION_MIME, JSON.stringify({ id: c.id, name: c.name, protocol: c.protocol }))}>
                   <ProtocolIcon protocol={c.protocol} />
                   <span className="tree-name">{c.name}</span>
-                  {c.hostname && <span className="tree-host">{c.hostname}</span>}
                 </div>
               </li>
             ))}
@@ -225,6 +356,9 @@ export function ConnectionTree({ actions }: { actions: TreeActions }) {
         </div>
       )}
       <div className={`tree-scroll ${dropId === '__root' ? 'drop-root' : ''}`}
+           tabIndex={0}
+           onKeyDown={onTreeKeyDown}
+           onClick={(e) => { if (e.target === e.currentTarget) setSelection(new Set()); }}
            onDragOver={(e) => { if (e.dataTransfer.types.includes(NODE_MIME)) { e.preventDefault(); setDropId('__root'); } }}
            onDrop={(e) => void onDropOn(e, null)}
            onContextMenu={(e) => {
@@ -237,6 +371,13 @@ export function ConnectionTree({ actions }: { actions: TreeActions }) {
         {isLoading && <div className="muted pad">Loading…</div>}
         {error && <div className="banner error">{errorMessage(error)}</div>}
         {tree && !nodes.length && <div className="muted pad">{query ? 'No matches' : 'No connections yet. Create one with “+”.'}</div>}
+        {selection.size > 1 && (
+          <div className="tree-selection-bar">
+            <span>{selection.size} selected</span>
+            <button className="danger" onClick={() => void deleteMany([...selection])}>Delete</button>
+            <button onClick={() => setSelection(new Set())}>Clear</button>
+          </div>
+        )}
         <ul className="tree" role="tree">{nodes.map((n) => renderNode(n, 0))}</ul>
       </div>
     </div>

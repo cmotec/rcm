@@ -305,8 +305,6 @@ async def create_connection(body: ConnectionCreate, request: Request, principal:
         if not access.can_create_in_folder(body.folder_id, Perm.CONNECTIONS_CREATE):
             raise Forbidden("not allowed to create connections here")
     auth_mode = body.auth_mode or "inherit"
-    if auth_mode == "credential" and not body.credential_id:
-        raise ValidationFailed("auth_mode 'credential' requires credential_id")
     settings_data = validate_settings(body.protocol, body.settings)
     await _check_references(db, access, settings_data, body.credential_id if auth_mode == "credential" else None)
 
@@ -383,8 +381,6 @@ async def update_connection(connection_id: uuid.UUID, body: ConnectionUpdate,
         conn.credential_id = body.credential_id
     if "password" in fields:
         _apply_password(conn, body.password)
-    if conn.auth_mode == "credential" and not conn.credential_id:
-        raise ValidationFailed("auth_mode 'credential' requires credential_id")
     await _check_references(
         db, access, conn.settings or {},
         conn.credential_id if ("credential_id" in fields and conn.auth_mode == "credential") else None,
