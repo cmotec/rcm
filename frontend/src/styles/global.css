@@ -229,7 +229,7 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; user-sel
 .session-slot { flex: 1; display: flex; min-width: 0; min-height: 0; }
 .session-root { flex: 1; display: flex; min-width: 0; min-height: 0; outline: none; position: relative; overflow: hidden; }
 #session-parking { position: absolute; width: 0; height: 0; overflow: hidden; visibility: hidden; }
-.guac-display-host { flex: 1; display: flex; align-items: center; justify-content: center; overflow: hidden; background: #000; }
+.guac-display-host { flex: 1; display: flex; align-items: center; justify-content: center; overflow: hidden; background: #000; touch-action: none; }
 .guac-display { cursor: default; }
 .session-terminal { background: #0f1115; }
 .terminal-host { flex: 1; padding: 4px 0 0 6px; min-width: 0; min-height: 0; }
@@ -373,3 +373,61 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; user-sel
 .login-brand { display: flex; align-items: center; gap: 10px; color: var(--accent); margin-bottom: 6px; }
 .login-brand h1 { color: var(--text); }
 .divider-text { text-align: center; color: var(--text-muted); font-size: 12px; }
+
+/* --- brand, collapsible sidebar, broadcast ----------------------------------------------- */
+.brand { display: inline-flex; align-items: center; gap: 8px; border: none; background: none; padding: 2px 6px 2px 2px;
+  font-weight: 700; margin-right: 6px; color: var(--text); }
+.brand:hover { background: var(--bg-hover); }
+.logo { flex: none; display: block; }
+.sidebar.collapsed { display: none; }
+.tab-broadcast { opacity: 0.55; }
+.tab-broadcast.on { opacity: 1; color: var(--accent); background: var(--accent-soft); }
+.badge.broadcast { background: var(--accent-soft); color: var(--accent); border-color: transparent; }
+.guac-key-input { position: absolute; left: 0; bottom: 0; width: 1px; height: 1px; opacity: 0; border: 0; padding: 0;
+  resize: none; pointer-events: none; }
+.drawer-backdrop { display: none; }
+
+/* --- phones & narrow windows ----------------------------------------------------------- */
+@media (max-width: 768px) {
+  .toolbar { gap: 2px; padding: 0 4px; }
+  .brand { margin-right: 2px; }
+  .brand-name, .views .label, .user .label { display: none; }
+  .views button { padding: 5px 8px; }
+  .user { margin: 0 2px; }
+
+  .sidebar.drawer { position: fixed; top: 42px; bottom: 0; left: 0; z-index: 900; width: min(88vw, 380px);
+    box-shadow: var(--shadow); }
+  .drawer-backdrop { display: block; position: fixed; inset: 42px 0 0 0; background: rgba(8, 10, 14, 0.4); z-index: 899; }
+  .tree-row { height: 36px; }
+  .tree-tools .icon-btn { padding: 7px; }
+
+  .tab { min-width: 96px; max-width: 180px; }
+  .frame-detail, .drag-grip { display: none; }
+  .frame-actions { overflow-x: auto; max-width: 60vw; }
+  .floating { left: 0 !important; top: 0 !important; width: 100% !important; height: 100% !important; }
+  .rz { display: none; }
+
+  .modal-backdrop { padding: 0; place-items: stretch; }
+  .modal { width: 100% !important; max-height: 100%; height: 100%; border-radius: 0; }
+  .form-grid { grid-template-columns: 1fr; }
+  .form-grid .span2 { grid-column: auto; }
+  .radio-cards { grid-template-columns: 1fr 1fr; }
+  .acl-add { grid-template-columns: 1fr; }
+  .kv { grid-template-columns: 1fr; }
+
+  .page { padding: 10px; overflow-x: auto; }
+  .page-head { flex-wrap: wrap; }
+  .admin { flex-direction: column; gap: 8px; }
+  .admin-nav { flex-direction: row; width: auto; overflow-x: auto; }
+  .admin-nav button { white-space: nowrap; }
+  .grid { display: block; overflow-x: auto; }
+
+  .fb-table th:nth-child(4), .fb-table td:nth-child(4), .fb-table th:nth-child(5), .fb-table td:nth-child(5) { display: none; }
+  .fb-toolbar { flex-wrap: wrap; }
+  .fb-path { flex-basis: 100%; order: 10; }
+  .transfer progress { width: 70px; }
+
+  .login-card { width: calc(100% - 24px); }
+  .toasts { left: 10px; right: 10px; max-width: none; }
+  .context-menu { max-width: calc(100vw - 16px); }
+}

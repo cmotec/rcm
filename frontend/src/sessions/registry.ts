@@ -8,17 +8,32 @@ import {
   type SavedLayout,
   closeSession as closeInLayout,
   fromSaved,
+  leaves,
+  placementOf,
   savedConnectionIds,
   splitWith,
   toSaved,
 } from '../workspace/model';
-import type { BaseSession } from './base';
+import { BaseSession as BaseSessionClass, type BaseSession } from './base';
 import { FileSession } from './FileSession';
 import { GuacSession } from './GuacSession';
 import { TerminalSession } from './TerminalSession';
 
 /** Live session controllers, keyed by session id (kept outside React on purpose). */
 const controllers = new Map<string, BaseSession>();
+
+/** Other panes of the same tab, while "type in all panes" is on for that tab. */
+BaseSessionClass.broadcastTargets = (sourceId: string): BaseSession[] => {
+  const { layout, broadcast } = useWorkspace.getState();
+  const placement = placementOf(layout, sourceId);
+  if (placement.where !== 'tab' || !broadcast[placement.tabId]) return [];
+  const tab = layout.tabs.find((t) => t.id === placement.tabId);
+  if (!tab) return [];
+  return leaves(tab.root)
+    .filter((id) => id !== sourceId)
+    .map((id) => controllers.get(id))
+    .filter((c): c is BaseSession => c !== undefined);
+};
 
 export function getController(id: string): BaseSession | undefined {
   return controllers.get(id);

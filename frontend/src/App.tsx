@@ -3,6 +3,8 @@ import {
   KeyRound,
   LayoutDashboard,
   LogOut,
+  Menu,
+  PanelLeft,
   Moon,
   PanelRight,
   PlugZap,
@@ -37,6 +39,8 @@ import { useTreePrefs } from './state/treePrefs';
 import { useWorkspace } from './state/workspace';
 import { savedConnectionIds } from './workspace/model';
 import { Workspace } from './workspace/Workspace';
+import { Logo } from './components/common/Logo';
+import { MOBILE_QUERY, useMediaQuery } from './util/useMediaQuery';
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { refetchOnWindowFocus: false, retry: (n, err) => !(err instanceof ApiError && err.status < 500) && n < 2 } },
@@ -67,6 +71,9 @@ function Shell({ config }: { config: AuthConfig }) {
   const [tokens, setTokens] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(() => Number(localStorage.getItem('sidebar.width') ?? 300));
   const [restoreOffer, setRestoreOffer] = useState<number>(0);
+  const isMobile = useMediaQuery(MOBILE_QUERY);
+  // Left menu: hidden while sessions are open (fullscreen workspace), toggled from the toolbar.
+  const [sidebarOpen, setSidebarOpen] = useState(true);
   const sessionCount = useWorkspace((s) => Object.keys(s.sessions).length);
   const banner = useQuery({ queryKey: ['app-settings'], queryFn: () => get<{ values: { banner_message?: string | null } }>('/api/v1/settings') });
   const started = useRef(false);
@@ -93,14 +100,24 @@ function Shell({ config }: { config: AuthConfig }) {
   // Subscribe/unsubscribe symmetrically (StrictMode runs effects twice in development).
   useEffect(() => startLayoutPersistence(), []);
 
-  // The details panel gives the workspace room while connected: hide it when a session opens,
-  // show it again once all sessions are closed. The toolbar toggle still works in between.
+  // Sessions start fullscreen: hide the left menu and the details panel when a session opens,
+  // show them again once all sessions are closed. The toolbar toggles still work in between.
   const prevSessionCount = useRef(sessionCount);
   useEffect(() => {
-    if (sessionCount > prevSessionCount.current) setShowDetails(false);
-    else if (sessionCount === 0 && prevSessionCount.current > 0) setShowDetails(true);
+    if (sessionCount > prevSessionCount.current) {
+      setShowDetails(false);
+      setSidebarOpen(false);
+    } else if (sessionCount === 0 && prevSessionCount.current > 0) {
+      setShowDetails(true);
+      setSidebarOpen(true);
+    }
     prevSessionCount.current = sessionCount;
   }, [sessionCount]);
+
+  const goToWorkspace = () => {
+    setView('workspace');
+    if (isMobile && sessionCount === 0) setSidebarOpen(true);
+  };
 
   // keep the selected connection fresh after tree reloads
   useEffect(() => {
@@ -145,25 +162,40 @@ function Shell({ config }: { config: AuthConfig }) {
   return (
     <div className="app">
       <header className="toolbar">
-        <div className="brand">{config.app_display_name}</div>
+        {view === 'workspace' && (
+          <button className="icon-btn" title={sidebarOpen ? 'Hide connections' : 'Show connections'}
+                  aria-expanded={sidebarOpen} onClick={() => setSidebarOpen((v) => !v)}>
+            {isMobile ? <Menu size={18} /> : <PanelLeft size={16} />}
+          </button>
+        )}
+        <button className="brand" onClick={goToWorkspace} title="Workspace">
+          <Logo />
+          <span className="brand-name">{config.app_display_name}</span>
+        </button>
         <nav className="views">
-          <button className={view === 'workspace' ? 'active' : ''} onClick={() => setView('workspace')}><LayoutDashboard size={15} /> Workspace
+          <button className={view === 'workspace' ? 'active' : ''} onClick={goToWorkspace} title="Workspace">
+            <LayoutDashboard size={15} /><span className="label">Workspace</span>
             {sessionCount > 0 && <span className="count">{sessionCount}</span>}</button>
-          <button className={view === 'credentials' ? 'active' : ''} onClick={() => setView('credentials')}><KeyRound size={15} /> Credentials</button>
+          <button className={view === 'credentials' ? 'active' : ''} onClick={() => setView('credentials')} title="Credentials">
+            <KeyRound size={15} /><span className="label">Credentials</span></button>
           {(isAdminish || hasPerm(me, 'api.access')) && (
-            <button className={view === 'admin' ? 'active' : ''} onClick={() => setView('admin')}><Settings size={15} /> {isAdminish ? 'Administration' : 'Activity'}</button>
+            <button className={view === 'admin' ? 'active' : ''} onClick={() => setView('admin')} title={isAdminish ? 'Administration' : 'Activity'}>
+              <Settings size={15} /><span className="label">{isAdminish ? 'Administration' : 'Activity'}</span></button>
           )}
         </nav>
         <span className="spacer" />
         {view === 'workspace' && (
           <>
-            <button className="icon-btn" title={showDetails ? 'Hide details panel' : 'Show details panel'} onClick={() => setShowDetails((v) => !v)}><PanelRight size={16} /></button>
+            {!isMobile && (
+              <button className="icon-btn" title={showDetails ? 'Hide details panel' : 'Show details panel'} onClick={() => setShowDetails((v) => !v)}><PanelRight size={16} /></button>
+            )}
             <button className="icon-btn" title="Disconnect all sessions" disabled={!sessionCount} onClick={() => void disconnectAll()}><PlugZap size={16} /></button>
           </>
         )}
         <button className="icon-btn" title="Toggle theme" onClick={toggleTheme}>{theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}</button>
         <button className="icon-btn" title="API tokens" onClick={() => setTokens(true)}><Ticket size={16} /></button>
-        <span className="user" title={me?.roles.join(', ')}><UserRound size={15} /> {me?.display_name ?? me?.username}</span>
+        <span className="user" title={`${me?.display_name ?? me?.username ?? ''} (${me?.roles.join(', ') ?? ''})`}>
+          <UserRound size={15} /><span className="label">{me?.display_name ?? me?.username}</span></span>
         <button className="icon-btn" title="Sign out" onClick={() => void logout()}><LogOut size={16} /></button>
       </header>
       {banner.data?.values.banner_message && <div className="banner info global">{banner.data.values.banner_message}</div>}
@@ -175,8 +207,10 @@ function Shell({ config }: { config: AuthConfig }) {
         </div>
       )}
       <div className="main" style={{ display: view === 'workspace' ? undefined : 'none' }}>
-        <aside className="sidebar" style={{ width: sidebarWidth }}>
-          <ConnectionTree actions={{
+        {isMobile && sidebarOpen && <div className="drawer-backdrop" onClick={() => setSidebarOpen(false)} />}
+        <aside className={`sidebar ${isMobile ? 'drawer' : ''} ${sidebarOpen ? '' : 'collapsed'}`}
+               style={isMobile ? undefined : { width: sidebarWidth }}>
+          <ConnectionTree tapToOpen={isMobile} actions={{
             editConnection: (c) => setConnDialog({ connection: c }),
             newConnection: (placement) => setConnDialog({ placement }),
             newFolder: (parentId) => setFolderDialog({ parentId }),
@@ -186,13 +220,19 @@ function Shell({ config }: { config: AuthConfig }) {
             selectedId: selected?.id ?? null,
           }} />
         </aside>
-        <div className="sidebar-resizer" onPointerDown={onSidebarResize} role="separator" aria-orientation="vertical" />
-        <Workspace emptyHint={<>
+        {!isMobile && sidebarOpen && (
+          <div className="sidebar-resizer" onPointerDown={onSidebarResize} role="separator" aria-orientation="vertical" />
+        )}
+        <Workspace emptyHint={isMobile ? <>
+          <p><b>No open sessions.</b></p>
+          <p className="muted">Open the menu and tap a connection.</p>
+          <button className="primary" onClick={() => setSidebarOpen(true)}><Menu size={14} /> Connections</button>
+        </> : <>
           <p><b>No open sessions.</b></p>
           <p className="muted">Double-click a connection, or drag it here. Open several sessions at once: each opens in a new tab —
             drag a tab into the workspace to float it, or onto the edge of a session to split the view.</p>
         </>} />
-        {showDetails && selected && (
+        {!isMobile && showDetails && selected && (
           <DetailsPanel connection={selected} onClose={() => setSelected(null)} onEdit={() => setConnDialog({ connection: selected })} />
         )}
       </div>

@@ -36,6 +36,8 @@ export class GuacSession extends BaseSession {
   transfers: FileTransfer[] = [];
   private transferListeners = new Set<() => void>();
   private pendingTicket: string | null;
+  /** Hidden text field that brings up the on-screen keyboard on phones/tablets. */
+  private keyInput: HTMLTextAreaElement;
 
   constructor(info: SessionInfo) {
     super(info);
@@ -43,6 +45,16 @@ export class GuacSession extends BaseSession {
     this.displayHost = document.createElement('div');
     this.displayHost.className = 'guac-display-host';
     this.element.appendChild(this.displayHost);
+    this.keyInput = document.createElement('textarea');
+    this.keyInput.className = 'guac-key-input';
+    this.keyInput.setAttribute('autocapitalize', 'off');
+    this.keyInput.setAttribute('autocomplete', 'off');
+    this.keyInput.setAttribute('autocorrect', 'off');
+    this.keyInput.spellcheck = false;
+    this.keyInput.setAttribute('aria-label', 'Keyboard input');
+    // Key events bubble to the session element, where Guacamole.Keyboard handles them; keep the field empty.
+    this.keyInput.addEventListener('input', () => window.setTimeout(() => (this.keyInput.value = ''), 0));
+    this.element.appendChild(this.keyInput);
     this.element.addEventListener('focus', () => void this.pushLocalClipboard());
     this.element.addEventListener('dragover', (e) => {
       if (this.uploadsAllowed) e.preventDefault();
@@ -118,6 +130,13 @@ export class GuacSession extends BaseSession {
         client.sendMouseState(ev.state, true);
       });
       mouse.on('mouseout', () => display.showCursor(false));
+      if (window.matchMedia('(pointer: coarse)').matches) {
+        // Touch: tap = click, drag = move with the button held, two-finger tap = right click.
+        const touch = new Guacamole.Mouse.Touchscreen(displayEl);
+        touch.onEach(['mousedown', 'mousemove', 'mouseup'], (e) => {
+          client.sendMouseState((e as unknown as { state: GuacTypes.Mouse.State }).state, true);
+        });
+      }
       display.oncursor = (canvas, x, y) => {
         this.localCursor = (mouse as unknown as { setCursor(c: HTMLCanvasElement, x: number, y: number): boolean })
           .setCursor(canvas, x, y);
@@ -125,9 +144,13 @@ export class GuacSession extends BaseSession {
       const keyboard = new Guacamole.Keyboard(this.element);
       keyboard.onkeydown = (keysym) => {
         client.sendKeyEvent(1, keysym);
+        this.mirrorKey(1, keysym);
         return false;
       };
-      keyboard.onkeyup = (keysym) => client.sendKeyEvent(0, keysym);
+      keyboard.onkeyup = (keysym) => {
+        client.sendKeyEvent(0, keysym);
+        this.mirrorKey(0, keysym);
+      };
       this.keyboard = keyboard;
     }
 
@@ -280,6 +303,22 @@ export class GuacSession extends BaseSession {
     writer.sendText(text);
     writer.sendEnd();
     this.lastLocalClipboard = text;
+  }
+
+  /** Open the device's on-screen keyboard (phones/tablets). */
+  showKeyboard(): void {
+    this.keyInput.focus({ preventScroll: true });
+  }
+
+  /** Keyboard broadcast: repeat a key event in the other desktop sessions of the same tab. */
+  private mirrorKey(pressed: 0 | 1, keysym: number): void {
+    for (const target of BaseSession.broadcastTargets(this.id)) {
+      if (target instanceof GuacSession) target.injectKey(pressed, keysym);
+    }
+  }
+
+  injectKey(pressed: 0 | 1, keysym: number): void {
+    if (!this.settings.read_only) this.client?.sendKeyEvent(pressed, keysym);
   }
 
   sendKeys(keysyms: number[]): void {

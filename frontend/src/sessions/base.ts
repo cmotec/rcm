@@ -22,6 +22,12 @@ export abstract class BaseSession {
   protected snapshot: SessionSnapshot = { status: 'connecting', message: null, detail: null };
   private listeners = new Set<Listener>();
   protected userClosed = false;
+  /**
+   * Keyboard broadcast: set by the registry. Returns the sessions that should receive a copy of this
+   * session's keyboard input (other panes of the same tab while "type in all panes" is on).
+   */
+  static broadcastTargets: (sourceId: string) => BaseSession[] = () => [];
+
   /** Called when the remote side ended the session normally (e.g. `exit`, logoff); the registry closes the window. */
   onEnded: ((reason: string) => void) | null = null;
   protected reconnectAttempts = 0;

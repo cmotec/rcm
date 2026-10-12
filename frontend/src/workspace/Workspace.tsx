@@ -1,4 +1,4 @@
-import { AppWindow, Maximize2, Minimize2, Minus, PanelTop, X } from 'lucide-react';
+import { AppWindow, Maximize2, Minimize2, Minus, PanelTop, Radio, X } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Protocol } from '../api/types';
 import { ProtocolIcon } from '../components/common/icons';
@@ -39,6 +39,8 @@ function TabStatus({ sessionId }: { sessionId: string }) {
 function TabButton({ tab, index, active }: { tab: Tab; index: number; active: boolean }) {
   const sessions = useWorkspace((s) => s.sessions);
   const update = useWorkspace((s) => s.update);
+  const broadcasting = useWorkspace((s) => Boolean(s.broadcast[tab.id]));
+  const toggleBroadcast = useWorkspace((s) => s.toggleBroadcast);
   const ids = leaves(tab.root);
   const first = sessions[ids[0]];
   const title = ids.map((id) => sessions[id]?.name ?? '…').join(' | ');
@@ -62,6 +64,7 @@ function TabButton({ tab, index, active }: { tab: Tab; index: number; active: bo
            e.preventDefault();
            dialogs.contextMenu(e.clientX, e.clientY, [
              ...(ids.length === 1 ? [{ label: 'Open in floating window', action: () => update((l) => floatSession(l, ids[0], { x: 60, y: 40, w: 900, h: 600 })) }] : []),
+             ...(ids.length > 1 ? [{ label: broadcasting ? 'Stop typing in all panes' : 'Type in all panes at once', action: () => toggleBroadcast(tab.id) }] : []),
              { label: 'Reconnect', action: () => ids.forEach((id) => void getController(id)?.reconnect(true)) },
              { separator: true, label: '' },
              { label: ids.length > 1 ? 'Close all in tab' : 'Disconnect', danger: true, action: () => void close() },
@@ -71,6 +74,13 @@ function TabButton({ tab, index, active }: { tab: Tab; index: number; active: bo
       {first && <ProtocolIcon protocol={first.protocol} size={13} />}
       <span className="tab-title">{title}</span>
       {ids.map((id) => <TabStatus key={id} sessionId={id} />)}
+      {ids.length > 1 && (
+        <button className={`icon-btn tab-broadcast ${broadcasting ? 'on' : ''}`} aria-pressed={broadcasting}
+                title={broadcasting ? 'Typing goes to all panes of this tab — click to stop' : 'Type in all panes of this tab at once'}
+                onClick={(e) => { e.stopPropagation(); toggleBroadcast(tab.id); }}>
+          <Radio size={12} />
+        </button>
+      )}
       <button className="icon-btn tab-close" aria-label="Close tab" onClick={(e) => { e.stopPropagation(); void close(); }}>
         <X size={12} />
       </button>

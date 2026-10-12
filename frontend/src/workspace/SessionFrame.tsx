@@ -8,9 +8,11 @@ import {
   Minimize2,
   Minus,
   PanelTop,
+  Radio,
   RotateCw,
   ShieldAlert,
   SquareArrowOutUpRight,
+  Type,
   Upload,
   X,
 } from 'lucide-react';
@@ -22,7 +24,8 @@ import { TerminalSession } from '../sessions/TerminalSession';
 import { closeSessionById, getController } from '../sessions/registry';
 import { useWorkspace } from '../state/workspace';
 import { formatBytes } from '../util/download';
-import { dockToTab, floatSession, focusSession } from './model';
+import { useMediaQuery } from '../util/useMediaQuery';
+import { dockToTab, floatSession, focusSession, placementOf } from './model';
 import { SESSION_MIME, useSessionState } from './useSession';
 
 /** Borrows the session's persistent element; parks it when unmounted so the session survives. */
@@ -121,11 +124,17 @@ interface FrameProps {
 export function SessionFrame({ sessionId, mode, floatControls, onTitlePointerDown, onTitleDoubleClick }: FrameProps) {
   const meta = useWorkspace((s) => s.sessions[sessionId]);
   const focused = useWorkspace((s) => s.layout.focusedSessionId === sessionId);
+  // "type in all panes" is on for the tab this pane belongs to
+  const broadcasting = useWorkspace((s) => {
+    const p = placementOf(s.layout, sessionId);
+    return p.where === 'tab' && p.split && Boolean(s.broadcast[p.tabId]);
+  });
   const update = useWorkspace((s) => s.update);
   const state = useSessionState(sessionId);
   const [clipboard, setClipboard] = useState(false);
   const ctrl = getController(sessionId);
   const upload = useRef<HTMLInputElement>(null);
+  const coarsePointer = useMediaQuery('(pointer: coarse)');
   if (!meta || !ctrl) return null;
   const unencrypted = meta.warnings.find((w) => ['unencrypted', 'encryption_not_guaranteed', 'cert_ignored'].includes(w.code));
 
@@ -156,12 +165,16 @@ export function SessionFrame({ sessionId, mode, floatControls, onTitlePointerDow
         <span className="frame-title" title={`${meta.name} — ${meta.host ?? ''}`}>{meta.name}</span>
         <span className={`status-dot ${state.status}`} title={state.message ?? state.status} />
         {unencrypted && <span className="badge warn" title={unencrypted.message}><ShieldAlert size={12} /> {unencrypted.code === 'cert_ignored' ? 'cert not verified' : 'unencrypted'}</span>}
+        {broadcasting && <span className="badge broadcast" title="Keyboard input goes to all panes of this tab"><Radio size={11} /> all panes</span>}
         {state.detail && <span className="frame-detail">{state.detail}</span>}
         <span className="spacer" />
         <div className="frame-actions" onPointerDown={(e) => e.stopPropagation()}>
           {ctrl instanceof GuacSession && (
             <>
               <button className="icon-btn" title="Send Ctrl+Alt+Del" onClick={() => ctrl.sendCtrlAltDel()}><Keyboard size={14} /></button>
+              {coarsePointer && (
+                <button className="icon-btn" title="Show on-screen keyboard" onClick={() => ctrl.showKeyboard()}><Type size={14} /></button>
+              )}
               {ctrl.uploadsAllowed && (
                 <button className="icon-btn" title="Upload files to the redirected drive" onClick={() => upload.current?.click()}>
                   <Upload size={14} />

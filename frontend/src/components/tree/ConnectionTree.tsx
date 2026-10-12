@@ -34,7 +34,8 @@ function loadExpanded(): Set<string> {
   }
 }
 
-export function ConnectionTree({ actions }: { actions: TreeActions }) {
+/** tapToOpen: phones/touch — a single tap opens a connection (double-tap is unreliable on touch screens). */
+export function ConnectionTree({ actions, tapToOpen = false }: { actions: TreeActions; tapToOpen?: boolean }) {
   const { data: tree, isLoading, error } = useTree();
   const { data: me } = useMe();
   const invalidate = useInvalidate();
@@ -148,6 +149,7 @@ export function ConnectionTree({ actions }: { actions: TreeActions }) {
     setSelection(new Set([key]));
     setAnchor(key);
     if (n.type === 'folder') toggle(n.id);
+    else if (tapToOpen) open(n.conn);
     else actions.select(n.conn);
   };
 
@@ -368,7 +370,7 @@ export function ConnectionTree({ actions }: { actions: TreeActions }) {
             {favorites.map((c) => (
               <li key={`fav-${c.id}`}>
                 <div className={`tree-row ${actions.selectedId === c.id ? 'selected' : ''}`} style={{ paddingLeft: 20 }}
-                     onClick={() => actions.select(c)} onDoubleClick={() => open(c)}
+                     onClick={() => (tapToOpen ? open(c) : actions.select(c))} onDoubleClick={() => open(c)}
                      draggable onDragStart={(e) => e.dataTransfer.setData(CONNECTION_MIME, JSON.stringify({ id: c.id, name: c.name, protocol: c.protocol }))}>
                   <ProtocolIcon protocol={c.protocol} />
                   {renderLabel(c)}

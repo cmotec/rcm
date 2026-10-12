@@ -50,7 +50,14 @@ export class TerminalSession extends BaseSession {
     term.loadAddon(fit);
     term.open(this.host);
     fit.fit();
-    term.onData((data) => this.send(this.encoder.encode(data)));
+    term.onData((data) => {
+      const bytes = this.encoder.encode(data);
+      this.send(bytes);
+      // keyboard broadcast: repeat the input in the other terminals of the same tab
+      for (const target of BaseSession.broadcastTargets(this.id)) {
+        if (target instanceof TerminalSession) target.injectInput(bytes);
+      }
+    });
     term.onBinary((data) => this.send(Uint8Array.from(data, (c) => c.charCodeAt(0) & 0xff)));
     term.onResize(({ cols, rows }) => this.sendControl({ type: 'resize', cols, rows }));
     this.term = term;
@@ -114,6 +121,10 @@ export class TerminalSession extends BaseSession {
 
   private sendControl(msg: object): void {
     if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(msg));
+  }
+
+  injectInput(bytes: Uint8Array): void {
+    this.send(bytes);
   }
 
   paste(text: string): void {

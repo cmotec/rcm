@@ -19,6 +19,9 @@ interface WorkspaceState {
   addSession: (meta: SessionMeta, opts?: { floating?: Rect }) => void;
   forgetSession: (id: string) => void;
   replaceLayout: (layout: Layout) => void;
+  /** Tabs (by id) in which keyboard input goes to every pane ("type in all panes"). */
+  broadcast: Record<string, boolean>;
+  toggleBroadcast: (tabId: string) => void;
 }
 
 export const useWorkspace = create<WorkspaceState>((set) => ({
@@ -34,4 +37,6 @@ export const useWorkspace = create<WorkspaceState>((set) => ({
       return { sessions };
     }),
   replaceLayout: (layout) => set({ layout }),
+  broadcast: {},
+  toggleBroadcast: (tabId) => set((s) => ({ broadcast: { ...s.broadcast, [tabId]: !s.broadcast[tabId] } })),
 }));
