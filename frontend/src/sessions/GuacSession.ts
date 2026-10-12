@@ -1,5 +1,6 @@
 import { wsUrl } from '../api/client';
 import type { SessionInfo } from '../api/types';
+import { dialogs } from '../state/dialogs';
 import { saveBlob } from '../util/download';
 import { BaseSession } from './base';
 import { MODIFIER_KEYSYMS, type Modifiers, type SpecialKey, type SpecialKeyTarget, specialKeysym } from './specialKeys';
@@ -67,6 +68,33 @@ export class GuacSession extends BaseSession implements SpecialKeyTarget {
       e.preventDefault();
       Array.from(e.dataTransfer.files).forEach((f) => this.uploadFile(f));
     });
+    this.element.addEventListener('paste', (e) => this.onPaste(e));
+  }
+
+  /**
+   * Paste from the local computer. Files (copied in Finder / Explorer / a file manager) are uploaded
+   * to the redirected drive — guacd cannot put files on the remote clipboard. Text goes to the remote
+   * clipboard.
+   */
+  private onPaste(e: ClipboardEvent): void {
+    const data = e.clipboardData;
+    if (!data) return;
+    const files = Array.from(data.files ?? []);
+    if (files.length) {
+      e.preventDefault();
+      if (!this.uploadsAllowed) {
+        dialogs.toast(this.settings.drive_enabled
+          ? 'Uploads are disabled for this connection.'
+          : "Pasting files needs drive redirection: enable 'Drive redirection (file transfer)' in the connection's RDP settings.",
+        'warning');
+        return;
+      }
+      dialogs.toast(`Uploading ${files.length} file(s) to the redirected drive (“This PC” on the remote computer)`, 'info');
+      files.forEach((f) => this.uploadFile(f));
+      return;
+    }
+    const text = data.getData('text/plain');
+    if (text && text !== this.lastLocalClipboard && text !== this.remoteClipboard) this.sendClipboard(text);
   }
 
   private get settings() {
@@ -160,7 +188,10 @@ export class GuacSession extends BaseSession implements SpecialKeyTarget {
       keyboard.onkeydown = (keysym) => {
         client.sendKeyEvent(1, keysym);
         this.mirrorKey(1, keysym);
-        return false;
+        // Ctrl/⌘+V: also let the browser fire its paste event, so pasted files can be uploaded
+        // (see onPaste). Returning true keeps the browser's default action for this key.
+        const pasteShortcut = (keysym === 0x76 || keysym === 0x56) && (keyboard.modifiers.ctrl || keyboard.modifiers.meta);
+        return pasteShortcut;
       };
       keyboard.onkeyup = (keysym) => {
         client.sendKeyEvent(0, keysym);
