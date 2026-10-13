@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import asyncio
 
 from fastapi import APIRouter, Depends
@@ -9,10 +10,11 @@ from fastapi.responses import JSONResponse
 
 from app import db as dbmod
 from app.api.deps import Principal, get_principal, settings_dep
-from app.config import Settings
+from app.config import APP_NAME, Settings
 from app.services.sessions.manager import get_manager
 
-VERSION = "0.1.0"
+# Release version, stamped into the image by the build (APP_VERSION build argument); "dev" otherwise.
+VERSION = os.environ.get("APP_VERSION") or "dev"
 health_router = APIRouter(tags=["health"])
 router = APIRouter(prefix="/system", tags=["system"])
 
@@ -45,7 +47,7 @@ async def info(principal: Principal = Depends(get_principal), settings: Settings
     manager = get_manager()
     return {
         "version": VERSION,
-        "app_display_name": settings.APP_DISPLAY_NAME,
+        "name": APP_NAME,
         "features": {
             "oidc": settings.OIDC_ENABLED,
             "local_auth": settings.LOCAL_AUTH_ENABLED,

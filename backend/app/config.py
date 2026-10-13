@@ -45,12 +45,15 @@ CertPolicy = Literal["validate", "fingerprints", "tofu", "ignore"]
 HostKeyPolicy = Literal["prompt", "strict", "accept-new"]
 
 
+#: Product name (UI, browser title, API docs).
+APP_NAME = "Remote Connections Manager"
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=None, case_sensitive=True, extra="ignore")
 
     # --- application -------------------------------------------------------
     APP_URL: str = "http://localhost:8080"
-    APP_DISPLAY_NAME: str = "Remote Connection Manager"
     ENVIRONMENT: Literal["production", "development", "test"] = "production"
     LOG_LEVEL: str = "INFO"
     LOG_FORMAT: Literal["json", "console"] = "json"

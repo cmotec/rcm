@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "backend"
 version = "0.1.0"
-description = "Backend of the self-hosted remote connection manager"
+description = "Backend of Remote Connections Manager"
 requires-python = ">=3.12"
 dependencies = [
   "fastapi==0.143.0",

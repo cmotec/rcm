@@ -1,8 +1,8 @@
 {
   "openapi": "3.1.0",
   "info": {
-    "title": "Remote Connection Manager API",
-    "description": "REST API of the self-hosted remote connection manager. Authenticate with the browser session cookie (plus `X-CSRF-Token` header for unsafe methods) or with a personal API token (`Authorization: Bearer pat_\u2026`). Errors use RFC 9457 problem details. POST endpoints that create resources honour the `Idempotency-Key` header.",
+    "title": "Remote Connections Manager API",
+    "description": "REST API of Remote Connections Manager. Authenticate with the browser session cookie (plus `X-CSRF-Token` header for unsafe methods) or with a personal API token (`Authorization: Bearer pat_\u2026`). Errors use RFC 9457 problem details. POST endpoints that create resources honour the `Idempotency-Key` header.",
     "version": "0.1.0"
   },
   "paths": {
@@ -4937,10 +4937,6 @@
       },
       "AuthConfigOut": {
         "properties": {
-          "app_display_name": {
-            "type": "string",
-            "title": "App Display Name"
-          },
           "oidc_enabled": {
             "type": "boolean",
             "title": "Oidc Enabled"
@@ -4956,7 +4952,6 @@
         },
         "type": "object",
         "required": [
-          "app_display_name",
           "oidc_enabled",
           "oidc_display_name",
           "local_enabled"

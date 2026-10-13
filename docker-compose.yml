@@ -1,10 +1,16 @@
-# Core deployment: web (nginx + SPA), api (Python), guacd.
-# PostgreSQL is EXTERNAL and configured through .env (DB_*). See docs/deployment.md.
+# Remote Connections Manager: web (nginx + SPA), api (Python), guacd.
+# Runs the prebuilt images from the registry. PostgreSQL is EXTERNAL and configured through .env
+# (DB_*). See docs/deployment.md.
 #
 #   cp .env.example .env   # fill in the mandatory values
-#   docker compose up -d --build
+#   docker compose pull && docker compose up -d
 #
-# Optional overlays:
+# Images: ${IMAGE_PREFIX}/remote-connections-manager-{web,api,guacd}:${IMAGE_TAG}
+#   IMAGE_PREFIX  default ghcr.io/cmotec (a Gitea registry: <gitea-host>/<owner>)
+#   IMAGE_TAG     default latest = newest release (or pin one: 1.2.0, 1.2, 1)
+#
+# Building from source instead: docker-compose.dev.yml.
+# Optional overlays (with either file):
 #   docker-compose.tls.yml       TLS termination in the web container
 #   docker-compose.postgres.yml  throw-away PostgreSQL for evaluation only
 
@@ -23,11 +29,7 @@ x-hardening: &hardening
 services:
   web:
     <<: *hardening
-    build: ./frontend
-    image: ${IMAGE_PREFIX:-local}/connections-web:${IMAGE_TAG:-latest}
-    # Built from this repository, never pulled (the image name is only a local tag).
-    # Docker Compose and Arcane both honour this; without it Arcane's default policy tries a registry pull.
-    pull_policy: build
+    image: ${IMAGE_PREFIX:-ghcr.io/cmotec}/remote-connections-manager-web:${IMAGE_TAG:-latest}
     read_only: true
     # tmpfs mounts are root-owned by default; nginx runs as uid 101 and must write the rendered
     # config (conf.d), its pid file and temp files (/tmp), so make them writable explicitly.
@@ -48,9 +50,7 @@ services:
 
   api:
     <<: *hardening
-    build: ./backend
-    image: ${IMAGE_PREFIX:-local}/connections-api:${IMAGE_TAG:-latest}
-    pull_policy: build
+    image: ${IMAGE_PREFIX:-ghcr.io/cmotec}/remote-connections-manager-api:${IMAGE_TAG:-latest}
     read_only: true
     tmpfs:
       - /tmp:mode=1777
@@ -78,9 +78,7 @@ services:
     <<: *hardening
     # Upstream guacd 1.6.0 plus /drives and /recordings owned by its user, so the named volumes are
     # created writable for guacd (see guacd/Dockerfile) without a root init container.
-    build: ./guacd
-    image: ${IMAGE_PREFIX:-local}/connections-guacd:${IMAGE_TAG:-latest}
-    pull_policy: build
+    image: ${IMAGE_PREFIX:-ghcr.io/cmotec}/remote-connections-manager-guacd:${IMAGE_TAG:-latest}
     # No published ports: guacd is reachable only from the api container (network "gateway").
     volumes:
       - drives:/drives

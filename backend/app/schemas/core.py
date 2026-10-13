@@ -46,7 +46,6 @@ class Problem(BaseModel):
 
 
 class AuthConfigOut(BaseModel):
-    app_display_name: str
     oidc_enabled: bool
     oidc_display_name: str
     local_enabled: bool

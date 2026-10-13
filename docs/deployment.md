@@ -4,9 +4,9 @@
 
 | Container | Image | Purpose | Exposed |
 |---|---|---|---|
-| `web` | built from `frontend/` (nginx-unprivileged) | serves the SPA, reverse-proxies `/api` (incl. WebSockets) | published port (`HTTP_PORT`, default 8080) |
-| `api` | built from `backend/` (python:3.12-slim, uid 10001) | REST API, WebSocket tunnels, SSH/SFTP/FTP, secret sync | internal only |
-| `guacd` | built from `guacd/` (`guacamole/guacd:1.6.0` + data directories owned by guacd, uid 1000) | RDP/VNC (and optional SSH) protocol gateway | **never published** |
+| `web` | `remote-connections-manager-web`, from `frontend/` (nginx-unprivileged) | serves the SPA, reverse-proxies `/api` (incl. WebSockets) | published port (`HTTP_PORT`, default 8080) |
+| `api` | `remote-connections-manager-api`, from `backend/` (python:3.12-slim, uid 10001) | REST API, WebSocket tunnels, SSH/SFTP/FTP, secret sync | internal only |
+| `guacd` | `remote-connections-manager-guacd`, from `guacd/` (`guacamole/guacd:1.6.0` + data directories owned by guacd, uid 1000) | RDP/VNC (and optional SSH) protocol gateway | **never published** |
 
 guacd runs unprivileged. Its image pre-creates `/drives` and `/recordings` owned by the guacd user,
 and Docker copies that owner into the `drives` and `recordings` volumes when it creates them, so
@@ -33,14 +33,64 @@ deployment. `docker-compose.postgres.yml` exists for evaluation only.
 * An OIDC client in Authentik (see §4) or a local recovery admin.
 * A DNS name and TLS certificate (either your own reverse proxy, or the TLS overlay).
 
+### Images and compose files
+
+| File | Images | Use |
+|---|---|---|
+| `docker-compose.yml` | pulled from a registry | production |
+| `docker-compose.dev.yml` | built from this repository | development, testing |
+
+`docker-compose.yml` runs `${IMAGE_PREFIX}/remote-connections-manager-{web,api,guacd}:${IMAGE_TAG}`
+(defaults: `ghcr.io/cmotec`, `latest`). Set `IMAGE_PREFIX` in `.env` for another registry or owner,
+for example `<gitea-host>/<owner>`, and `IMAGE_TAG` to pin a release (`1.2.0`, `1.2`, `1`); `latest`
+follows every new release. Private registry: `docker login <registry>` on the host first. Updating:
+`docker compose pull && docker compose up -d`.
+
+### Releases
+
+Images are built only for releases. Work is committed and pushed on `dev` (nothing is built); a
+release is a version tag on `main`:
+
+```bash
+git checkout main && git pull
+git merge dev && git push        # still nothing is built
+git tag v1.2.0
+git push origin v1.2.0           # builds and publishes the images
+git checkout dev
+```
+
+The workflow `.github/workflows/container-images.yml` then
+
+1. checks that the tag looks like `vMAJOR.MINOR.PATCH` and that the tagged commit is on `main`
+   (otherwise it stops without building),
+2. builds `remote-connections-manager-{api,web,guacd}` for amd64 and arm64,
+3. pushes them with the tags `1.2.0`, `1.2`, `1` and `latest`. The API reports the version in
+   `/api/v1/system/info` and the API docs.
+
+A pre-release such as `v1.3.0-rc1` is published only as `1.3.0-rc1` and does not move `latest`.
+`latest` is the last final release built, so tagging a fix for an older line (`v1.1.5` after
+`v1.2.0`) moves it back; pin `IMAGE_TAG` in production if that matters. "Run workflow" in the
+Actions tab rebuilds an existing tag.
+
+Registries:
+
+* **GitHub:** to `ghcr.io/<owner>/…` with the built-in token, nothing to configure. New packages
+  are private; make them public in the package settings if wanted.
+* **Gitea** (Actions enabled, a runner with Docker): the same workflow file works. Set the repository
+  variable `REGISTRY` (your Gitea host, e.g. `git.example.com`), optionally `REGISTRY_USER`, and the
+  secret `REGISTRY_TOKEN` (an access token with the `write:package` scope). Images go to
+  `<gitea-host>/<owner>/…`.
+
+`docker-compose.dev.yml` builds the images instead (`docker compose -f docker-compose.dev.yml up -d
+--build`) and reuses everything else from `docker-compose.yml` through `extends`.
+
 ### Docker management UIs (Arcane, Portainer, …)
 
-`web` and `api` are built from this repository and are not published to a registry. Their image
-names (`local/connections-*`) are only local tags. Both services set `pull_policy: build`, so
-Compose-compatible tools build them instead of trying a registry pull. Arcane, for example,
-otherwise applies its *Default Deploy Pull Policy* (`missing`), which pulls and fails. The tool
-needs the whole repository as build context, so use a Git-synced project rather than pasting only
-the compose file. `.env` is optional: set the variables from `.env.example` in the tool's
+Production: point the stack at `docker-compose.yml`; the tool pulls the images. Development: use a
+Git-synced project with `docker-compose.dev.yml` as the compose file, because the whole repository
+is the build context. Its services set `pull_policy: build`, so the tool builds them instead of
+trying a registry pull (Arcane's *Default Deploy Pull Policy* `missing` would otherwise pull the
+`local/…` names and fail). `.env` is optional: set the variables from `.env.example` in the tool's
 environment editor instead.
 
 ## 3. First start
@@ -51,8 +101,9 @@ cp .env.example .env
 echo "ENCRYPTION_KEYS=k1:$(openssl rand -base64 32)"
 #   → put that line into .env together with ENCRYPTION_ACTIVE_KEY_ID=k1
 $EDITOR .env          # APP_URL, DB_*, OIDC_*, …
+docker compose pull
 docker compose run --rm --no-deps api python -m app.cli check-config
-docker compose up -d --build
+docker compose up -d
 docker compose ps     # all services healthy
 ```
 
@@ -143,7 +194,8 @@ secrets:
 ## 9. Upgrading
 
 1. Read the release notes. Back up the database (see [backup-restore.md](backup-restore.md)).
-2. `git pull` (or change `IMAGE_TAG`).
+2. Set the new `IMAGE_TAG` (or keep `latest`) and run `docker compose pull`; with
+   `docker-compose.dev.yml`: `git pull` and `--build`.
 3. `docker compose build && docker compose up -d`. Migrations run automatically.
    Live sessions are dropped during the API restart. Clients reconnect on their own, and RDP
    returns to the same Windows session.

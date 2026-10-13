@@ -2,6 +2,7 @@ import { LogIn, MonitorSmartphone } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { ApiError, post } from '../api/client';
 import type { AuthConfig } from '../api/types';
+import { APP_NAME } from '../appName';
 
 const ERRORS: Record<string, string> = {
   idp_error: 'The identity provider reported an error.',
@@ -72,7 +73,7 @@ export function LoginPage({ config, onLoggedIn }: { config: AuthConfig; onLogged
   return (
     <div className="login">
       <div className="login-card">
-        <div className="login-brand"><MonitorSmartphone size={28} /><h1>{config.app_display_name}</h1></div>
+        <div className="login-brand"><MonitorSmartphone size={28} /><h1>{APP_NAME}</h1></div>
         {error && <div className="banner error">{error}</div>}
         {signedOut && !error && <div className="banner info">You have been signed out.</div>}
         {autoRedirect && <p className="muted">Redirecting to {config.oidc_display_name}…</p>}

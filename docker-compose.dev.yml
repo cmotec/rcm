@@ -1,0 +1,48 @@
+# Development / testing: builds web, api and guacd from this repository instead of pulling them.
+# Everything else (hardening, volumes, networks, health checks) comes from docker-compose.yml.
+#
+#   docker compose -f docker-compose.dev.yml up -d --build
+#
+# Docker management UIs (Arcane, Portainer, …): use a Git-synced project with this file as the
+# compose file; the whole repository is the build context. `pull_policy: build` makes them build
+# instead of trying a registry pull (Arcane's default deploy pull policy would pull and fail).
+# Optional overlays: docker-compose.tls.yml, docker-compose.postgres.yml (add them with -f).
+
+services:
+  web:
+    extends:
+      file: docker-compose.yml
+      service: web
+    build: ./frontend
+    image: local/remote-connections-manager-web:dev
+    pull_policy: build
+    depends_on:
+      api:
+        condition: service_healthy
+
+  api:
+    extends:
+      file: docker-compose.yml
+      service: api
+    build: ./backend
+    image: local/remote-connections-manager-api:dev
+    pull_policy: build
+    depends_on:
+      guacd:
+        condition: service_healthy
+
+  guacd:
+    extends:
+      file: docker-compose.yml
+      service: guacd
+    build: ./guacd
+    image: local/remote-connections-manager-guacd:dev
+    pull_policy: build
+
+networks:
+  app: {}
+  gateway: {}
+
+volumes:
+  drives: {}
+  recordings: {}

@@ -13,7 +13,7 @@ from sqlalchemy import func, select
 
 from app import models as m
 from app.api.v1 import acl, admin, auth, connections, credentials, imports, secrets, sessions, system
-from app.config import Settings, get_settings
+from app.config import APP_NAME, Settings, get_settings
 from app.context import RequestInfo, request_info
 from app.db import dispose_engine, init_engine, session_scope
 from app.errors import install_error_handlers
@@ -85,10 +85,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     configure_logging(settings.LOG_LEVEL, settings.LOG_FORMAT)
     docs = settings.API_DOCS_ENABLED
     app = FastAPI(
-        title=f"{settings.APP_DISPLAY_NAME} API",
+        title=f"{APP_NAME} API",
         version=system.VERSION,
         description=(
-            "REST API of the self-hosted remote connection manager. Authenticate with the browser session "
+            "REST API of Remote Connections Manager. Authenticate with the browser session "
             "cookie (plus `X-CSRF-Token` header for unsafe methods) or with a personal API token "
             "(`Authorization: Bearer pat_…`). Errors use RFC 9457 problem details. "
             "POST endpoints that create resources honour the `Idempotency-Key` header."
