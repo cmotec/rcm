@@ -1,4 +1,4 @@
-/** Product mark (same as the favicon). The product name itself is configurable (APP_DISPLAY_NAME). */
+/** Product mark (same as the favicon). */
 export function Logo({ size = 26 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 32 32" aria-hidden="true" className="logo">

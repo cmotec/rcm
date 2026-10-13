@@ -1,0 +1,16 @@
+Remote Connections Manager
+Copyright 2026 cmotec e.U.
+Niederösterreichring 5/11/16, 3100 St. Pölten, Austria
+
+Licensed under the Apache License, Version 2.0, subject to the Commons Clause License Condition
+v1.0 (see LICENSE): you may use the software, also commercially, and modify and redistribute it,
+but you may not sell it or a product or service whose value derives substantially from it.
+
+DISCLAIMER: The software is provided "as is", without warranty of any kind. Use it at your own
+risk. To the extent permitted by law, cmotec e.U. is not liable for any damage or loss caused by
+the software or its use, including data loss, security incidents, downtime or damage to connected
+systems.
+
+This product includes or uses third-party software, each under its own license, among others:
+Apache Guacamole guacd (Apache License 2.0), guacamole-common-js (Apache License 2.0),
+xterm.js (MIT), React (MIT), FastAPI (MIT), SQLAlchemy (MIT), asyncssh (EPL 2.0 / GPL 2.0+).

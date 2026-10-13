@@ -43,6 +43,7 @@ import { savedConnectionIds } from './workspace/model';
 import { Workspace } from './workspace/Workspace';
 import { syncAppFullscreen } from './workspace/appFullscreen';
 import { Logo } from './components/common/Logo';
+import { APP_NAME } from './appName';
 import { MOBILE_QUERY, useMediaQuery } from './util/useMediaQuery';
 
 const queryClient = new QueryClient({
@@ -60,7 +61,7 @@ function useTheme(): [string, () => void] {
   return [theme, () => setTheme((t) => (t === 'dark' ? 'light' : 'dark'))];
 }
 
-function Shell({ config }: { config: AuthConfig }) {
+function Shell() {
   const { data: me } = useMe();
   const { data: tree } = useTree();
   const qc = useQueryClient();
@@ -84,8 +85,8 @@ function Shell({ config }: { config: AuthConfig }) {
   const started = useRef(false);
 
   useEffect(() => {
-    document.title = config.app_display_name;
-  }, [config.app_display_name]);
+    document.title = APP_NAME;
+  }, []);
 
   useEffect(() => {
     if (me?.csrf_token) setCsrfToken(me.csrf_token);
@@ -177,7 +178,7 @@ function Shell({ config }: { config: AuthConfig }) {
         )}
         <button className="brand" onClick={goToWorkspace} title="Workspace">
           <Logo />
-          <span className="brand-name">{config.app_display_name}</span>
+          <span className="brand-name">{APP_NAME}</span>
         </button>
         <nav className="views">
           <button className={view === 'workspace' ? 'active' : ''} onClick={goToWorkspace} title="Workspace">
@@ -277,7 +278,7 @@ function AuthGate() {
   }
   if (window.location.pathname.startsWith('/login')) window.history.replaceState(null, '', '/');
   if (me.data.signage) return <SignageView />;
-  return <Shell config={config.data!} />;
+  return <Shell />;
 }
 
 export function App() {

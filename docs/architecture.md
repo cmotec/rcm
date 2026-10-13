@@ -1,8 +1,7 @@
 # Architecture
 
-> The product name is not decided yet. Nothing in the code, images, cookies,
-> database or docs carries a brand. The name shown in the UI comes from the
-> `APP_DISPLAY_NAME` environment variable.
+> Product name: **Remote Connections Manager** (constant `APP_NAME` in `backend/app/config.py` and
+> `frontend/src/appName.ts`; container images `remote-connections-manager-{api,web,guacd}`).
 
 ## 1. Goals and shape of the system
 

@@ -50,7 +50,7 @@ def _tolerant_unwrap(conn: ssl.SSLSocket) -> None:
     """Don't hang on servers that never answer the TLS close_notify of a data connection.
 
     ftplib calls ``conn.unwrap()`` after every LIST/RETR/STOR and blocks until the server answers.
-    Some embedded servers (e.g. Bambu Lab printers) never do, so every listing and transfer would
+    Some embedded servers never do, so every listing and transfer would
     wait for the full timeout. Give the server a moment, then drop the TLS layer; the transfer itself
     is already complete and the server confirms it on the control channel.
     """
@@ -67,8 +67,8 @@ def _tolerant_unwrap(conn: ssl.SSLSocket) -> None:
 
 
 class _ReuseSessionMixin:
-    """Reuse the control channel's TLS session on data channels (vsftpd require_ssl_reuse, FileZilla,
-    Bambu Lab printers) and tolerate servers that skip the TLS shutdown."""
+    """Reuse the control channel's TLS session on data channels (vsftpd require_ssl_reuse, FileZilla) 
+    and tolerate servers that skip the TLS shutdown."""
 
     def ntransfercmd(self, cmd: str, rest: Any = None) -> tuple[socket.socket, int | None]:  # type: ignore[override]
         conn, size = ftplib.FTP.ntransfercmd(self, cmd, rest)  # type: ignore[arg-type]
@@ -288,7 +288,7 @@ def connect_ftp(*, host: str, port: int, username: str | None, password: str | N
         if isinstance(exc, TimeoutError) and stage == "server greeting" and port == 990:
             hint = " Port 990 normally uses implicit TLS: choose protocol FTPS with TLS mode 'Implicit'."
         if isinstance(exc, ftplib.error_perm) and stage.startswith("login"):
-            hint = " Check username and password (Bambu Lab printers: user 'bblp', password = LAN access code)."
+            hint = " Check username and password."
         raise FileOpError(f"FTP {stage} failed: {_describe(exc, timeout)}.{hint}", code="ftp_connect_failed") from exc
 
 

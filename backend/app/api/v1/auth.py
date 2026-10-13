@@ -54,7 +54,6 @@ def _login_error_redirect(settings: Settings, code: str) -> RedirectResponse:
 @router.get("/config", response_model=AuthConfigOut, summary="Public login configuration")
 async def auth_config(settings: Settings = Depends(settings_dep)) -> AuthConfigOut:
     return AuthConfigOut(
-        app_display_name=settings.APP_DISPLAY_NAME,
         oidc_enabled=settings.OIDC_ENABLED,
         oidc_display_name=settings.OIDC_DISPLAY_NAME,
         local_enabled=settings.LOCAL_AUTH_ENABLED,

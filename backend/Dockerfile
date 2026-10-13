@@ -7,7 +7,10 @@ COPY app ./app
 RUN pip wheel --wheel-dir /wheels .
 
 FROM python:3.12-slim-bookworm
-ENV PYTHONDONTWRITEBYTECODE=1 \
+# Release version shown in /api/v1/system/info and the API docs (set by the release workflow).
+ARG APP_VERSION=dev
+ENV APP_VERSION=${APP_VERSION} \
+    PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     USER=app \

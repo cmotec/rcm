@@ -22,7 +22,6 @@ export interface Page<T> {
 }
 
 export interface AuthConfig {
-  app_display_name: string;
   oidc_enabled: boolean;
   oidc_display_name: string;
   local_enabled: boolean;
