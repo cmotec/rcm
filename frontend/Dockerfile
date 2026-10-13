@@ -15,5 +15,5 @@ COPY --from=build /src/dist /usr/share/nginx/html
 ENV API_UPSTREAM=api:8000 \
     CLIENT_MAX_BODY_SIZE=0 \
     NGINX_ENVSUBST_FILTER="^(API_UPSTREAM|CLIENT_MAX_BODY_SIZE|SERVER_NAME)$"
-EXPOSE 8080 8443
+EXPOSE 8080
 HEALTHCHECK --interval=15s --timeout=3s --retries=5 CMD wget -q -O /dev/null http://127.0.0.1:8080/web-health || exit 1

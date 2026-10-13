@@ -19,19 +19,28 @@ network and has no published port. The api and guacd containers need outbound ac
 the remote hosts, and the api container also needs outbound access to PostgreSQL, the IdP and the
 secret managers.
 
-PostgreSQL is **external** (PostgreSQL 14 or newer). It is not part of the core
-deployment. `docker-compose.postgres.yml` exists for evaluation only.
+PostgreSQL 14 or newer: either your own (`docker-compose.yml`, configured with `DB_*`), or the
+bundled one in `docker-compose.postgres.yml`, a complete deployment including PostgreSQL:
+
+```bash
+cp .env.example .env    # APP_URL, ENCRYPTION_KEYS, DB_PASSWORD, OIDC_* or LOCAL_*
+docker compose -f docker-compose.postgres.yml pull
+docker compose -f docker-compose.postgres.yml up -d
+```
+
+There, `DB_HOST`/`DB_SSLMODE` are set by the file, `DB_NAME` and `DB_USER` default to `rcm`, and the
+data lives in the volume `pgdata` (back it up, see docs/backup-restore.md).
 
 ## 2. Prerequisites
 
-* Docker Engine 24+ with Compose v2.24+ (the TLS overlay uses `!override`).
+* Docker Engine 24+ with Compose v2.20+ (`extends` with `depends_on`, optional `env_file`).
 * An empty PostgreSQL database and a role that owns it:
   ```sql
   CREATE ROLE connections LOGIN PASSWORD '…';
   CREATE DATABASE connections OWNER connections;
   ```
 * An OIDC client in Authentik (see §4) or a local recovery admin.
-* A DNS name and TLS certificate (either your own reverse proxy, or the TLS overlay).
+* A DNS name and a TLS-terminating reverse proxy (see §5).
 
 ### Images and compose files
 
@@ -141,19 +150,13 @@ Users without any mapped role are refused (`OIDC_DEFAULT_ROLE=none`).
 
 ## 5. TLS
 
-Option A, an existing reverse proxy (Traefik, Caddy, HAProxy, …): terminate TLS there,
-forward to `web:8080`, keep the `Host` header, allow WebSocket upgrades, and use long read
-timeouts (≥ 1 h).
+The web container serves plain HTTP on port 8080 (published as `HTTP_PORT`). Terminate TLS at a
+reverse proxy (Traefik, Caddy, Nginx Proxy Manager, HAProxy, …): forward to the web container,
+keep the `Host` header, allow WebSocket upgrades, and use long read timeouts (≥ 1 h, remote
+sessions are long-lived WebSockets).
 
-Option B, the TLS overlay:
-
-```bash
-mkdir -p certs && cp fullchain.pem certs/tls.crt && cp privkey.pem certs/tls.key
-docker compose -f docker-compose.yml -f docker-compose.tls.yml up -d
-```
-
-In both cases set `APP_URL=https://…` and `COOKIE_SECURE=true`. Cookies then use the
-`__Host-` prefix and browsers will not send them over HTTP.
+Set `APP_URL=https://…` and `COOKIE_SECURE=true`. Cookies then use the `__Host-` prefix and
+browsers will not send them over HTTP.
 
 ## 6. Trust stores
 
