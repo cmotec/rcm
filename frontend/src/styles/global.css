@@ -76,8 +76,10 @@
 
 * { box-sizing: border-box; }
 html, body { height: 100%; margin: 0; }
-/* --app-height follows the visible area (above the on-screen keyboard on phones, see util/viewport.ts) */
+/* Phones (util/viewport.ts): --app-height follows the visible area above the on-screen keyboard;
+   for a remote desktop the app keeps its size and slides up by --kb-shift instead. */
 #root { height: var(--app-height, 100%); margin: 0; overflow: hidden; }
+html.kb-shift #root { transform: translateY(calc(-1 * var(--kb-shift, 0px))); }
 body { font: 13px/1.45 var(--font); color: var(--text); background: var(--bg); overflow: hidden; }
 h1, h2, h3, h4 { margin: 0; font-weight: 600; }
 h1 { font-size: 17px; } h2 { font-size: 15px; } h3 { font-size: 14px; margin: 16px 0 8px; } h4 { font-size: 13px; margin: 12px 0 6px; }
@@ -442,7 +444,7 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; user-sel
 
 /* --- touch key bar ----------------------------------------------------------------------- */
 .key-bar { display: flex; gap: 4px; padding: 4px; overflow-x: auto; background: var(--bg-elev);
-  border-bottom: 1px solid var(--border); flex: none; scrollbar-width: none; touch-action: pan-x; }
+  border-top: 1px solid var(--border); flex: none; scrollbar-width: none; touch-action: pan-x; }
 .key-bar .key { flex: none; min-width: 40px; height: 34px; padding: 0 9px; justify-content: center;
   font-size: 13px; font-family: var(--mono); user-select: none; -webkit-user-select: none; }
 .key-bar .key.mod { font-family: var(--font); }

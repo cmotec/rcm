@@ -86,6 +86,7 @@ async function ask<T>(loading: ConnectHandle, question: () => Promise<T>): Promi
 async function startSession(conn: ConnectionRef, target: OpenTarget, loading: ConnectHandle): Promise<string | null> {
   let credentials: InteractiveCredentials | undefined;
   let credentialId: string | undefined;
+  let authOverride = target.authOverride;
   const accepted: { hostname: string; port: number; fingerprint: string }[] = [];
   let info: SessionInfo | null = null;
   for (let attempt = 0; attempt < 8 && !info; attempt++) {
@@ -97,13 +98,14 @@ async function startSession(conn: ConnectionRef, target: OpenTarget, loading: Co
         credentials,
         credential_id: credentialId,
         accept_host_keys: accepted,
-        auth_override: target.authOverride,
+        auth_override: authOverride,
       });
     } catch (err) {
       if (err instanceof ApiError && err.code === 'credential_choice_required') {
-        const chosen = await ask(loading, () => dialogs.chooseCredential(conn.name));
+        const chosen = await ask(loading, () => dialogs.chooseCredential(conn.name, conn.protocol));
         if (!chosen) return null;
-        credentialId = chosen;
+        if (chosen.mode === 'credential') credentialId = chosen.credential_id;
+        else authOverride = chosen; // typed by the user, this session only
         continue;
       }
       if (err instanceof ApiError && err.code === 'credentials_required') {

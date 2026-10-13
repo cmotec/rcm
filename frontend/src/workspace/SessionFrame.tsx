@@ -217,14 +217,15 @@ export function SessionFrame({ sessionId, mode, floatControls, onTitlePointerDow
           <button className="icon-btn danger" title="Disconnect" onClick={() => void closeSessionById(sessionId)}><X size={14} /></button>
         </div>
       </div>
-      {coarsePointer && (ctrl instanceof GuacSession || ctrl instanceof TerminalSession) && (
-        <MobileKeyBar target={ctrl} desktop={ctrl instanceof GuacSession ? ctrl : undefined} />
-      )}
       <div className="frame-body">
         <SessionSlot sessionId={sessionId} />
         <StatusOverlay sessionId={sessionId} />
         {ctrl instanceof GuacSession && <GuacTransfers ctrl={ctrl} />}
       </div>
+      {/* below the session: right above the on-screen keyboard while typing */}
+      {coarsePointer && (ctrl instanceof GuacSession || ctrl instanceof TerminalSession) && (
+        <MobileKeyBar target={ctrl} desktop={ctrl instanceof GuacSession ? ctrl : undefined} />
+      )}
       {ctrl instanceof GuacSession && (
         <input ref={upload} type="file" multiple hidden onChange={(e) => {
           Array.from(e.target.files ?? []).forEach((f) => ctrl.uploadFile(f));

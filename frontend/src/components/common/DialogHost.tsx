@@ -1,6 +1,7 @@
 import { ShieldAlert, TriangleAlert } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { useCredentials } from '../../api/hooks';
+import type { Protocol } from '../../api/types';
 import { type DialogRequest, type InteractiveCredentials, useDialogStore } from '../../state/dialogs';
 import { Modal } from './Modal';
 
@@ -108,6 +109,38 @@ function HostKeyDialog({ req }: { req: Extract<DialogRequest, { kind: 'hostkey' 
   );
 }
 
+/** Username / password (/ domain for RDP) typed for one session; not stored. */
+function OwnCredentialsForm({ protocol, value, onChange, onSubmit }: {
+  protocol: Protocol; value: InteractiveCredentials; onChange: (v: InteractiveCredentials) => void; onSubmit: () => void;
+}) {
+  return (
+    <form onSubmit={(e) => { e.preventDefault(); onSubmit(); }} autoComplete="off">
+      <label className="field"><span>Username</span>
+        <input value={value.username ?? ''} onChange={(e) => onChange({ ...value, username: e.target.value })} autoFocus />
+      </label>
+      <label className="field"><span>Password</span>
+        <input type="password" value={value.password ?? ''} onChange={(e) => onChange({ ...value, password: e.target.value })}
+               autoComplete="new-password" />
+      </label>
+      {protocol === 'rdp' && (
+        <label className="field"><span>Domain</span>
+          <input value={value.domain ?? ''} onChange={(e) => onChange({ ...value, domain: e.target.value })} />
+        </label>
+      )}
+      <button type="submit" hidden />
+    </form>
+  );
+}
+
+/** Only the fields that were filled in. */
+function typedCredentials(v: InteractiveCredentials): InteractiveCredentials {
+  const out: InteractiveCredentials = {};
+  if (v.username) out.username = v.username;
+  if (v.password) out.password = v.password;
+  if (v.domain) out.domain = v.domain;
+  return out;
+}
+
 function ChooseCredentialDialog({ req }: { req: Extract<DialogRequest, { kind: 'choose-credential' }> }) {
   const { data, isLoading } = useCredentials();
   const [filter, setFilter] = useState('');
@@ -115,27 +148,52 @@ function ChooseCredentialDialog({ req }: { req: Extract<DialogRequest, { kind: '
   const usable = (data?.items ?? []).filter((c) => ['connect', 'edit', 'manage'].includes(c.permission ?? ''));
   const shown = usable.filter((c) => !filter || `${c.name} ${c.username ?? ''} ${c.domain ?? ''}`.toLowerCase().includes(filter.toLowerCase()));
   const [selected, setSelected] = useState<string | null>(null);
+  const [tab, setTab] = useState<'store' | 'own' | null>(null);
+  const [own, setOwn] = useState<InteractiveCredentials>({ username: '', password: '', domain: '' });
+  // nothing to choose from: start on "Enter credentials"
+  const active = tab ?? (!isLoading && !usable.length ? 'own' : 'store');
+  const valid = active === 'store' ? Boolean(selected) : Boolean(own.username || own.password);
+  const submit = () => {
+    if (!valid) return;
+    if (active === 'store') req.resolve({ mode: 'credential', credential_id: selected! });
+    else req.resolve({ mode: 'own', credentials: typedCredentials(own) });
+  };
   return (
     <Modal title={`Connect to ${req.connectionName}`} onClose={() => req.resolve(null)} width={480}
            footer={<>
              <button onClick={() => req.resolve(null)}>Cancel</button>
-             <button className="primary" disabled={!selected} onClick={() => req.resolve(selected)}>Connect</button>
+             <button className="primary" disabled={!valid} onClick={submit}>Connect</button>
            </>}>
-      <p className="muted">Choose the credential to use for this session.</p>
-      {usable.length > 6 && (
-        <input placeholder="Filter…" value={filter} onChange={(e) => setFilter(e.target.value)} autoFocus />
+      <div className="tabs-inline" role="tablist">
+        <button role="tab" aria-selected={active === 'store'} className={active === 'store' ? 'active' : ''}
+                onClick={() => setTab('store')}>Credential store</button>
+        <button role="tab" aria-selected={active === 'own'} className={active === 'own' ? 'active' : ''}
+                onClick={() => setTab('own')}>Enter credentials</button>
+      </div>
+      {active === 'store' ? (
+        <>
+          <p className="muted">Choose the credential to use for this session.</p>
+          {usable.length > 6 && (
+            <input placeholder="Filter…" value={filter} onChange={(e) => setFilter(e.target.value)} autoFocus />
+          )}
+          {isLoading && <p className="muted">Loading…</p>}
+          {!isLoading && !usable.length && <p className="banner warn">You have no credentials you are allowed to use.</p>}
+          <ul className="choice-list" role="listbox">
+            {shown.map((c) => (
+              <li key={c.id} role="option" aria-selected={selected === c.id} className={selected === c.id ? 'active' : ''}
+                  onClick={() => setSelected(c.id)} onDoubleClick={() => req.resolve({ mode: 'credential', credential_id: c.id })}>
+                <b>{c.name}</b>
+                <span className="muted">{c.domain ? `${c.domain}\\` : ''}{c.username ?? ''}</span>
+              </li>
+            ))}
+          </ul>
+        </>
+      ) : (
+        <>
+          <p className="muted">Used for this session only, not stored.</p>
+          <OwnCredentialsForm protocol={req.protocol} value={own} onChange={setOwn} onSubmit={submit} />
+        </>
       )}
-      {isLoading && <p className="muted">Loading…</p>}
-      {!isLoading && !usable.length && <p className="banner warn">You have no credentials you are allowed to use.</p>}
-      <ul className="choice-list" role="listbox">
-        {shown.map((c) => (
-          <li key={c.id} role="option" aria-selected={selected === c.id} className={selected === c.id ? 'active' : ''}
-              onClick={() => setSelected(c.id)} onDoubleClick={() => req.resolve(c.id)}>
-            <b>{c.name}</b>
-            <span className="muted">{c.domain ? `${c.domain}\\` : ''}{c.username ?? ''}</span>
-          </li>
-        ))}
-      </ul>
     </Modal>
   );
 }
@@ -146,7 +204,6 @@ function OpenWithDialog({ req }: { req: Extract<DialogRequest, { kind: 'open-wit
   const [mode, setMode] = useState<'own' | 'credential'>('own');
   const [v, setV] = useState<InteractiveCredentials>({ username: '', password: '', domain: '' });
   const [credId, setCredId] = useState<string | null>(null);
-  const showDomain = req.protocol === 'rdp';
   const valid = mode === 'own' ? Boolean(v.username || v.password) : Boolean(credId);
   const submit = () => {
     if (!valid) return;
@@ -154,11 +211,7 @@ function OpenWithDialog({ req }: { req: Extract<DialogRequest, { kind: 'open-wit
       req.resolve({ mode: 'credential', credential_id: credId! });
       return;
     }
-    const credentials: InteractiveCredentials = {};
-    if (v.username) credentials.username = v.username;
-    if (v.password) credentials.password = v.password;
-    if (v.domain) credentials.domain = v.domain;
-    req.resolve({ mode: 'own', credentials });
+    req.resolve({ mode: 'own', credentials: typedCredentials(v) });
   };
   return (
     <Modal title={`Open ${req.connectionName} with different credentials`} onClose={() => req.resolve(null)} width={480}
@@ -178,21 +231,7 @@ function OpenWithDialog({ req }: { req: Extract<DialogRequest, { kind: 'open-wit
         </label>
       </div>
       {mode === 'own' ? (
-        <form onSubmit={(e) => { e.preventDefault(); submit(); }} autoComplete="off">
-          <label className="field"><span>Username</span>
-            <input value={v.username} onChange={(e) => setV({ ...v, username: e.target.value })} autoFocus />
-          </label>
-          <label className="field"><span>Password</span>
-            <input type="password" value={v.password} onChange={(e) => setV({ ...v, password: e.target.value })}
-                   autoComplete="new-password" />
-          </label>
-          {showDomain && (
-            <label className="field"><span>Domain</span>
-              <input value={v.domain} onChange={(e) => setV({ ...v, domain: e.target.value })} />
-            </label>
-          )}
-          <button type="submit" hidden />
-        </form>
+        <OwnCredentialsForm protocol={req.protocol} value={v} onChange={setV} onSubmit={submit} />
       ) : (
         <>
           {!usable.length && <p className="banner warn">You have no credentials you are allowed to use.</p>}
