@@ -1,13 +1,24 @@
-# EVALUATION ONLY: a local PostgreSQL so the stack can be tried without an external database.
-# Production deployments use an externally managed PostgreSQL (docs/deployment.md).
-#   docker compose -f docker-compose.yml -f docker-compose.postgres.yml up -d
-# Set in .env: DB_HOST=postgres DB_SSLMODE=disable and DB_PASSWORD to the value below.
+# All-in-one: Remote Connections Manager with its own PostgreSQL, no external database needed.
+# Uses the same prebuilt images as docker-compose.yml.
+#
+#   cp .env.example .env     # set APP_URL, ENCRYPTION_KEYS, DB_PASSWORD and OIDC_* or LOCAL_*
+#   docker compose -f docker-compose.postgres.yml pull
+#   docker compose -f docker-compose.postgres.yml up -d
+#
+# DB_HOST and DB_SSLMODE from .env are ignored here (the database is the "postgres" service on an
+# internal network). DB_NAME and DB_USER default to "rcm"; DB_PASSWORD is required and is used to
+# create the database on the first start, so changing it later needs ALTER ROLE in PostgreSQL too.
+# The data lives in the volume "pgdata": back it up (docs/backup-restore.md).
+
 services:
   postgres:
     image: postgres:17-alpine
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
     environment:
-      POSTGRES_DB: ${DB_NAME:-app}
-      POSTGRES_USER: ${DB_USER:-app}
+      POSTGRES_DB: ${DB_NAME:-rcm}
+      POSTGRES_USER: ${DB_USER:-rcm}
       POSTGRES_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
     volumes:
       - pgdata:/var/lib/postgresql/data
@@ -16,14 +27,54 @@ services:
       interval: 5s
       timeout: 5s
       retries: 20
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+    # No published port: only the api reaches it (network "db").
     networks:
-      - app
-    restart: unless-stopped
+      - db
+
+  web:
+    extends:
+      file: docker-compose.yml
+      service: web
+    depends_on:
+      api:
+        condition: service_healthy
 
   api:
+    extends:
+      file: docker-compose.yml
+      service: api
+    environment:
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_NAME: ${DB_NAME:-rcm}
+      DB_USER: ${DB_USER:-rcm}
+      DB_SSLMODE: disable
     depends_on:
       postgres:
         condition: service_healthy
+      guacd:
+        condition: service_healthy
+    networks:
+      - app
+      - gateway
+      - db
+
+  guacd:
+    extends:
+      file: docker-compose.yml
+      service: guacd
+
+networks:
+  app: {}
+  gateway: {}
+  db: {}
 
 volumes:
+  drives: {}
+  recordings: {}
   pgdata: {}

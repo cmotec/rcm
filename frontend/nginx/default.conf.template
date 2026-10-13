@@ -1,4 +1,4 @@
-# HTTP server. Put a TLS-terminating reverse proxy in front of it, or use docker-compose.tls.yml.
+# HTTP server. Put a TLS-terminating reverse proxy in front of it (docs/deployment.md, "TLS").
 map $http_upgrade $connection_upgrade {
     default upgrade;
     ''      close;

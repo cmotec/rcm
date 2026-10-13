@@ -10,9 +10,8 @@
 #   IMAGE_TAG     default latest = newest release (or pin one: 1.2.0, 1.2, 1)
 #
 # Building from source instead: docker-compose.dev.yml.
-# Optional overlays (with either file):
-#   docker-compose.tls.yml       TLS termination in the web container
-#   docker-compose.postgres.yml  throw-away PostgreSQL for evaluation only
+# With a bundled PostgreSQL instead of an external one: docker-compose.postgres.yml.
+# TLS: terminate it at your reverse proxy (docs/deployment.md, "TLS").
 
 x-hardening: &hardening
   security_opt:

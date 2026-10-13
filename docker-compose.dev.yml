@@ -6,7 +6,6 @@
 # Docker management UIs (Arcane, Portainer, …): use a Git-synced project with this file as the
 # compose file; the whole repository is the build context. `pull_policy: build` makes them build
 # instead of trying a registry pull (Arcane's default deploy pull policy would pull and fail).
-# Optional overlays: docker-compose.tls.yml, docker-compose.postgres.yml (add them with -f).
 
 services:
   web:
