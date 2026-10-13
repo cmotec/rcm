@@ -392,7 +392,8 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; user-sel
 .tab-broadcast { opacity: 0.55; }
 .tab-broadcast.on { opacity: 1; color: var(--accent); background: var(--accent-soft); }
 .badge.broadcast { background: var(--accent-soft); color: var(--accent); border-color: transparent; }
-.guac-key-input { position: absolute; left: 0; bottom: 0; width: 1px; height: 1px; opacity: 0; border: 0; padding: 0;
+/* at the top: the browser has no reason to scroll it into view above the keyboard */
+.guac-key-input { position: absolute; left: 0; top: 0; width: 1px; height: 1px; opacity: 0; border: 0; padding: 0;
   resize: none; pointer-events: none; }
 .drawer-backdrop { display: none; }
 
