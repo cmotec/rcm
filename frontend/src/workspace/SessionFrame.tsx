@@ -4,6 +4,7 @@ import {
   GripVertical,
   Keyboard,
   LoaderCircle,
+  Maximize,
   Maximize2,
   Minimize2,
   Minus,
@@ -24,6 +25,7 @@ import { closeSessionById, getController } from '../sessions/registry';
 import { useWorkspace } from '../state/workspace';
 import { formatBytes } from '../util/download';
 import { useMediaQuery } from '../util/useMediaQuery';
+import { enterAppFullscreen, exitAppFullscreen } from './appFullscreen';
 import { MobileKeyBar } from './MobileKeyBar';
 import { dockToTab, floatSession, focusSession, placementOf } from './model';
 import { SESSION_MIME, useSessionState } from './useSession';
@@ -47,11 +49,13 @@ function StatusOverlay({ sessionId }: { sessionId: string }) {
   const s = useSessionState(sessionId);
   if (s.status === 'connected') return null;
   const ctrl = getController(sessionId);
+  const meta = useWorkspace.getState().sessions[sessionId];
   const busy = s.status === 'connecting' || s.status === 'reconnecting';
   return (
     <div className={`session-overlay ${s.status}`}>
       <div className="overlay-card">
-        {busy && <LoaderCircle className="spin" size={22} />}
+        {busy && <LoaderCircle className="spin" size={26} />}
+        {meta && <div className="overlay-name"><ProtocolIcon protocol={meta.protocol} /> {meta.name}</div>}
         <div className="overlay-title">
           {s.status === 'connecting' && 'Connecting…'}
           {s.status === 'reconnecting' && 'Reconnecting…'}
@@ -60,6 +64,11 @@ function StatusOverlay({ sessionId }: { sessionId: string }) {
           {s.status === 'closed' && 'Closed'}
         </div>
         {s.message && <div className="overlay-msg">{s.message}</div>}
+        {busy && (
+          <div className="overlay-actions">
+            <button onClick={() => void closeSessionById(sessionId)}>Cancel</button>
+          </div>
+        )}
         {(s.status === 'disconnected' || s.status === 'error') && (
           <div className="overlay-actions">
             <button className="primary" onClick={() => void ctrl?.reconnect(true)}><RotateCw size={14} /> Reconnect</button>
@@ -130,6 +139,7 @@ export function SessionFrame({ sessionId, mode, floatControls, onTitlePointerDow
     return p.where === 'tab' && p.split && Boolean(s.broadcast[p.tabId]);
   });
   const update = useWorkspace((s) => s.update);
+  const fullscreen = useWorkspace((s) => s.fullscreenSessionId === sessionId);
   const state = useSessionState(sessionId);
   const [clipboard, setClipboard] = useState(false);
   const ctrl = getController(sessionId);
@@ -151,8 +161,13 @@ export function SessionFrame({ sessionId, mode, floatControls, onTitlePointerDow
   };
 
   return (
-    <div className={`session-frame mode-${mode} ${focused ? 'focused' : ''}`} onMouseDownCapture={focus}
-         data-leaf={mode !== 'float' ? sessionId : undefined}>
+    <div className={`session-frame mode-${mode} ${focused ? 'focused' : ''} ${fullscreen ? 'app-fullscreen' : ''}`}
+         onMouseDownCapture={focus} data-leaf={mode !== 'float' ? sessionId : undefined}>
+      {fullscreen && (
+        <button className="fullscreen-exit" title="Exit fullscreen" onClick={() => { exitAppFullscreen(); ctrl.focus(); }}>
+          <Minimize2 size={16} />
+        </button>
+      )}
       <div className="frame-head" onPointerDown={onTitlePointerDown} onDoubleClick={onTitleDoubleClick}>
         <span className="drag-grip" draggable title="Drag onto the workspace to split, onto the tab bar to dock"
               onDragStart={(e) => {
@@ -183,6 +198,11 @@ export function SessionFrame({ sessionId, mode, floatControls, onTitlePointerDow
             <button className="icon-btn" title="Clipboard" onClick={() => setClipboard(true)}><ClipboardIcon size={14} /></button>
           )}
           <button className="icon-btn" title="Reconnect" onClick={() => void ctrl.reconnect(true)}><RotateCw size={14} /></button>
+          {ctrl.info.kind !== 'files' && (
+            <button className="icon-btn" title="Fullscreen (whole app, no menus)" onClick={() => { enterAppFullscreen(sessionId); ctrl.focus(); }}>
+              <Maximize size={14} />
+            </button>
+          )}
           {mode === 'split' && (
             <button className="icon-btn" title="Move to own tab" onClick={() => update((l) => dockToTab(l, sessionId))}>
               <PanelTop size={14} />
@@ -197,14 +217,15 @@ export function SessionFrame({ sessionId, mode, floatControls, onTitlePointerDow
           <button className="icon-btn danger" title="Disconnect" onClick={() => void closeSessionById(sessionId)}><X size={14} /></button>
         </div>
       </div>
-      {coarsePointer && (ctrl instanceof GuacSession || ctrl instanceof TerminalSession) && (
-        <MobileKeyBar target={ctrl} desktop={ctrl instanceof GuacSession ? ctrl : undefined} />
-      )}
       <div className="frame-body">
         <SessionSlot sessionId={sessionId} />
         <StatusOverlay sessionId={sessionId} />
         {ctrl instanceof GuacSession && <GuacTransfers ctrl={ctrl} />}
       </div>
+      {/* below the session: right above the on-screen keyboard while typing */}
+      {coarsePointer && (ctrl instanceof GuacSession || ctrl instanceof TerminalSession) && (
+        <MobileKeyBar target={ctrl} desktop={ctrl instanceof GuacSession ? ctrl : undefined} />
+      )}
       {ctrl instanceof GuacSession && (
         <input ref={upload} type="file" multiple hidden onChange={(e) => {
           Array.from(e.target.files ?? []).forEach((f) => ctrl.uploadFile(f));

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import re
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -78,8 +79,11 @@ async def build_launch(
     interactive: dict[str, str] | None = None,
     chosen_credential_id: uuid.UUID | None = None,
     auth_override: AuthOverride | None = None,
+    precheck: Callable[[EffectiveConnection], None] | None = None,
     _depth: int = 0,
 ) -> tuple[LaunchConfig, EffectiveConnection]:
+    """``precheck`` runs on the resolved values before any slow work (DNS, jump hosts), so questions
+    for the user (credentials, choice) come back immediately."""
     if _depth > 3:
         raise ValidationFailed("jump host / tunnel chain is too deep")
     eff = await resolve_connection(
@@ -99,6 +103,8 @@ async def build_launch(
         raise ValidationFailed("no hostname configured (neither on the connection nor on a parent)")
     if eff.port is None:
         raise ValidationFailed("no port configured")
+    if precheck is not None:
+        precheck(eff)
     domains = eff.search_domains.value if eff.search_domains else []
     resolution = await apply_search_domains(eff.hostname.value, domains, settings.DNS_RESOLVE_TIMEOUT_SECONDS)
 

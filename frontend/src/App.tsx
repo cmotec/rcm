@@ -41,6 +41,7 @@ import { useTreePrefs } from './state/treePrefs';
 import { useWorkspace } from './state/workspace';
 import { savedConnectionIds } from './workspace/model';
 import { Workspace } from './workspace/Workspace';
+import { syncAppFullscreen } from './workspace/appFullscreen';
 import { Logo } from './components/common/Logo';
 import { MOBILE_QUERY, useMediaQuery } from './util/useMediaQuery';
 
@@ -72,6 +73,7 @@ function Shell({ config }: { config: AuthConfig }) {
   const [acl, setAcl] = useState<{ type: 'folder' | 'connection'; id: string; name: string } | null>(null);
   const [tokens, setTokens] = useState(false);
   const [profile, setProfile] = useState(false);
+  useEffect(() => syncAppFullscreen(), []);
   const [sidebarWidth, setSidebarWidth] = useState(() => Number(localStorage.getItem('sidebar.width') ?? 300));
   const [restoreOffer, setRestoreOffer] = useState<number>(0);
   const isMobile = useMediaQuery(MOBILE_QUERY);

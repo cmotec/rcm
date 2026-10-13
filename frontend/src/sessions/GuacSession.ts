@@ -3,6 +3,7 @@ import type { SessionInfo } from '../api/types';
 import { dialogs } from '../state/dialogs';
 import { saveBlob } from '../util/download';
 import { BaseSession } from './base';
+import { sessionPrefs } from './prefs';
 import { MODIFIER_KEYSYMS, type Modifiers, type SpecialKey, type SpecialKeyTarget, specialKeysym } from './specialKeys';
 import Guacamole from './guac';
 import type { GuacTypes } from './guac';
@@ -25,6 +26,32 @@ export interface FileTransfer {
 }
 
 /** RDP / VNC (and SSH via guacd) session rendered by guacamole-common-js. */
+const IS_MAC = /Mac|iPhone|iPad|iPod/.test(navigator.platform || navigator.userAgent);
+/** Meta_L/R and Super_L/R (the Command keys) → Control_L/R. */
+const COMMAND_TO_CTRL = new Map([[0xffe7, 0xffe3], [0xffe8, 0xffe4], [0xffeb, 0xffe3], [0xffec, 0xffe4]]);
+/** Shift_L/R, Alt_L/R, ISO_Level3_Shift (Option may arrive as either). */
+const COMPOSE_MODIFIERS = new Set([0xffe1, 0xffe2, 0xffe9, 0xffea, 0xfe03]);
+
+/** A keysym that produces a character (Latin-1 or Unicode), as opposed to a function key. */
+function isCharacter(keysym: number): boolean {
+  return (keysym >= 0x20 && keysym <= 0x7e) || (keysym >= 0xa0 && keysym <= 0xff) || keysym >= 0x01000000;
+}
+
+/**
+ * Remote desktop size for a slot of css pixels: device pixels for sharp HiDPI, but within what RDP
+ * hosts accept (larger requests make many hosts fall back to 1024×768).
+ */
+const MAX_REMOTE = { w: 4096, h: 2048 };
+function remoteSize(cssWidth: number, cssHeight: number): { w: number; h: number; dpi: number } {
+  const dpr = window.devicePixelRatio || 1;
+  const factor = Math.max(1, Math.min(dpr, MAX_REMOTE.w / Math.max(cssWidth, 1), MAX_REMOTE.h / Math.max(cssHeight, 1)));
+  return {
+    w: Math.min(MAX_REMOTE.w, Math.round(cssWidth * factor)),
+    h: Math.min(MAX_REMOTE.h, Math.round(cssHeight * factor)),
+    dpi: Math.round(96 * factor),
+  };
+}
+
 export class GuacSession extends BaseSession implements SpecialKeyTarget {
   private client: GuacTypes.Client | null = null;
   private keyboard: GuacTypes.Keyboard | null = null;
@@ -35,6 +62,14 @@ export class GuacSession extends BaseSession implements SpecialKeyTarget {
   private tearingDown = false;
   private localCursor = false;
   private lastLocalClipboard = '';
+  /** Keys currently held down on the remote (from the physical keyboard). */
+  private remoteDown = new Set<number>();
+  /** Option-composed characters → the modifiers released for them (pressed again on key up). */
+  private composed = new Map<number, number[]>();
+  /** Guacamole client state (3 = connected) and whether the remote screen has been drawn yet. */
+  private guacState = 0;
+  private firstFrame = false;
+  private firstFrameTimer: number | null = null;
   remoteClipboard = '';
   /** Remote clipboard text the browser has not accepted yet (written on the next user gesture). */
   private pendingLocalCopy: string | null = null;
@@ -86,9 +121,30 @@ export class GuacSession extends BaseSession implements SpecialKeyTarget {
 
   override dispose(): void {
     window.removeEventListener('focus', this.retryCopy);
+    if (this.firstFrameTimer !== null) window.clearTimeout(this.firstFrameTimer);
     if (this.heldPaste) window.clearTimeout(this.heldPaste.timer);
     this.heldPaste = null;
     super.dispose();
+  }
+
+  private established(): void {
+    if (this.firstFrameTimer !== null) window.clearTimeout(this.firstFrameTimer);
+    this.firstFrameTimer = null;
+    if (this.snapshot.status !== 'connected') this.connectionEstablished();
+  }
+
+  /** Key from the physical keyboard: tracked, sent, and mirrored to broadcast targets. */
+  private keyboardKey(pressed: 0 | 1, keysym: number): void {
+    if (pressed) this.remoteDown.add(keysym);
+    else this.remoteDown.delete(keysym);
+    this.client?.sendKeyEvent(pressed, keysym);
+    this.mirrorKey(pressed, keysym);
+  }
+
+  /** macOS: the Command key acts as Ctrl on the remote (copy/paste with ⌘C/⌘V), unless switched off. */
+  private localToRemote(keysym: number): number {
+    if (IS_MAC && sessionPrefs.macCommandAsCtrl) return COMMAND_TO_CTRL.get(keysym) ?? keysym;
+    return keysym;
   }
 
   /** Remote → local clipboard. */
@@ -121,10 +177,10 @@ export class GuacSession extends BaseSession implements SpecialKeyTarget {
     window.clearTimeout(held.timer);
     if (held.refocus && document.activeElement === this.keyInput) this.element.focus({ preventScroll: true });
     this.keyInput.value = '';
-    if (sendKey) this.keyEvent(1, held.keysym);
+    if (sendKey) this.keyboardKey(1, held.keysym);
     for (const [pressed, keysym] of held.queued) {
       if (keysym === held.keysym && !sendKey) continue;
-      this.keyEvent(pressed, keysym);
+      this.keyboardKey(pressed, keysym);
     }
   }
 
@@ -211,7 +267,8 @@ export class GuacSession extends BaseSession implements SpecialKeyTarget {
     this.teardown();
     this.tearingDown = false;
     this.lastError = null;
-    this.setStatus(this.reconnectAttempts ? 'reconnecting' : 'connecting', 'Connecting…');
+    this.firstFrame = false;
+    this.setStatus(this.reconnectAttempts ? 'reconnecting' : 'connecting', 'Opening the connection…');
 
     const tunnel = new Guacamole.WebSocketTunnel(wsUrl(this.info.tunnel_path!));
     const client = new Guacamole.Client(tunnel);
@@ -255,29 +312,47 @@ export class GuacSession extends BaseSession implements SpecialKeyTarget {
           .setCursor(canvas, x, y);
       };
       const keyboard = new Guacamole.Keyboard(this.element);
-      keyboard.onkeydown = (keysym) => {
+      keyboard.onkeydown = (raw) => {
+        const keysym = this.localToRemote(raw);
         if (this.heldPaste) {
-          if (keysym !== this.heldPaste.keysym) this.heldPaste.queued.push([1, keysym]);
+          if (raw !== this.heldPaste.keysym) this.heldPaste.queued.push([1, keysym]);
           return false;
         }
-        const pasteShortcut = (keysym === 0x76 || keysym === 0x56) && (keyboard.modifiers.ctrl || keyboard.modifiers.meta);
+        const pasteShortcut = (raw === 0x76 || raw === 0x56) && (keyboard.modifiers.ctrl || keyboard.modifiers.meta);
         if (pasteShortcut && (!this.settings.disable_paste || this.uploadsAllowed)) {
           // Hold the V back and let the browser paste (onPaste): the local clipboard reaches the
           // remote first, then Ctrl+V pastes it there. Returning true keeps the browser's paste action.
-          this.holdPaste(keysym);
+          this.holdPaste(raw);
           return true;
         }
-        client.sendKeyEvent(1, keysym);
-        this.mirrorKey(1, keysym);
+        if (IS_MAC && keyboard.modifiers.alt && !keyboard.modifiers.ctrl && !keyboard.modifiers.meta && isCharacter(keysym)) {
+          // macOS Option (+ Shift) composes characters (Shift+Option+7 = "\" on a German Mac). Send the
+          // character itself without Option/Shift held: guacd types it with the remote layout's keys.
+          const lifted = [...this.remoteDown].filter((k) => COMPOSE_MODIFIERS.has(k));
+          lifted.forEach((k) => this.keyboardKey(0, k));
+          this.composed.set(raw, lifted);
+          this.keyboardKey(1, keysym);
+          return false;
+        }
+        this.keyboardKey(1, keysym);
         return false;
       };
-      keyboard.onkeyup = (keysym) => {
+      keyboard.onkeyup = (raw) => {
+        const keysym = this.localToRemote(raw);
         if (this.heldPaste) {
           this.heldPaste.queued.push([0, keysym]);
           return;
         }
-        client.sendKeyEvent(0, keysym);
-        this.mirrorKey(0, keysym);
+        const lifted = this.composed.get(raw);
+        if (lifted) {
+          this.composed.delete(raw);
+          this.keyboardKey(0, keysym);
+          // modifiers the user still holds go down again (e.g. typing several "\" in a row)
+          const held = (keyboard as unknown as { pressed: Record<number, boolean> }).pressed;
+          lifted.filter((k) => held[k]).forEach((k) => this.keyboardKey(1, k));
+          return;
+        }
+        this.keyboardKey(0, keysym);
         // a key typed on the soft keyboard releases modifiers latched on the touch key bar
         if (this.latchedKeysyms.size && !MODIFIER_VALUES.has(keysym)) this.releaseLatched();
       };
@@ -285,7 +360,22 @@ export class GuacSession extends BaseSession implements SpecialKeyTarget {
     }
 
     // --- display scaling
-    display.onresize = () => this.rescale();
+    display.onresize = () => {
+      this.rescale();
+      // the remote screen has a size: it is drawing, hide the loading overlay
+      if (!this.firstFrame && display.getWidth() > 0) {
+        this.firstFrame = true;
+        if (this.client === client && this.guacState === 3) this.established();
+        // Some hosts start at their default size (1024×768) and accept the window size only once the
+        // display-control channel is up: request it again shortly after the first frame.
+        const { w, h } = this.lastSentSize;
+        if (Math.abs(display.getWidth() - w) > 8 || Math.abs(display.getHeight() - h) > 8) {
+          window.setTimeout(() => {
+            if (this.client === client) this.sendSizeNow(true);
+          }, 1500);
+        }
+      }
+    };
 
     // --- clipboard (remote → local)
     client.onclipboard = (stream, mimetype) => {
@@ -325,11 +415,23 @@ export class GuacSession extends BaseSession implements SpecialKeyTarget {
     };
     client.onstatechange = (state) => {
       if (this.client !== client) return;
-      if (state === 1 || state === 2) this.setStatus(this.snapshot.status === 'reconnecting' ? 'reconnecting' : 'connecting', 'Connecting…');
+      this.guacState = state;
+      const busy = this.snapshot.status === 'reconnecting' ? 'reconnecting' : 'connecting';
+      if (state === 1) this.setStatus(busy, 'Opening the connection…');
+      else if (state === 2) this.setStatus(busy, `Connecting to ${this.info.effective_host ?? 'the remote host'}…`);
       else if (state === 3) {
-        this.connectionEstablished();
         this.rescale();
         this.sendSizeNow();
+        if (this.firstFrame) {
+          this.established();
+        } else {
+          // guacd is connected, the remote screen is not drawn yet (e.g. Windows still signing in)
+          this.setStatus(busy, this.info.protocol === 'rdp' ? 'Signing in…' : 'Waiting for the remote screen…');
+          if (this.firstFrameTimer !== null) window.clearTimeout(this.firstFrameTimer);
+          this.firstFrameTimer = window.setTimeout(() => {
+            if (this.client === client && this.guacState === 3) this.established();
+          }, 20_000);
+        }
       } else if (state === 5 && !this.tearingDown && !this.userClosed) {
         const err = this.lastError;
         const message = err?.message || 'Disconnected';
@@ -343,17 +445,17 @@ export class GuacSession extends BaseSession implements SpecialKeyTarget {
       this.lastError = this.lastError ?? status;
     };
 
-    const dpr = window.devicePixelRatio || 1;
+    const size = remoteSize(cssWidth, cssHeight);
     const params = new URLSearchParams({
       ticket,
-      width: String(Math.round(cssWidth * dpr)),
-      height: String(Math.round(cssHeight * dpr)),
-      dpi: String(Math.round(96 * dpr)),
+      width: String(size.w),
+      height: String(size.h),
+      dpi: String(size.dpi),
       tz: Intl.DateTimeFormat().resolvedOptions().timeZone,
     });
     for (const a of Guacamole.AudioPlayer.getSupportedTypes()) params.append('audio', a);
     for (const i of ['image/png', 'image/jpeg', 'image/webp']) params.append('image', i);
-    this.lastSentSize = { w: Math.round(cssWidth * dpr), h: Math.round(cssHeight * dpr) };
+    this.lastSentSize = { w: size.w, h: size.h };
     client.connect(params.toString());
   }
 
@@ -366,6 +468,8 @@ export class GuacSession extends BaseSession implements SpecialKeyTarget {
       this.keyboard.reset();
     }
     this.keyboard = null;
+    this.remoteDown.clear();
+    this.composed.clear();
     if (this.client) {
       const c = this.client;
       this.client = null;
@@ -386,14 +490,12 @@ export class GuacSession extends BaseSession implements SpecialKeyTarget {
     this.resizeTimer = window.setTimeout(() => this.sendSizeNow(), RESIZE_DEBOUNCE_MS);
   }
 
-  private sendSizeNow(): void {
+  private sendSizeNow(force = false): void {
     const client = this.client;
     if (!client || this.settings.server_resize === false) return;
-    const dpr = window.devicePixelRatio || 1;
-    const w = Math.round(this.element.clientWidth * dpr);
-    const h = Math.round(this.element.clientHeight * dpr);
+    const { w, h } = remoteSize(this.element.clientWidth, this.element.clientHeight);
     if (w < 64 || h < 64) return;
-    if (Math.abs(w - this.lastSentSize.w) < 8 && Math.abs(h - this.lastSentSize.h) < 8) return;
+    if (!force && Math.abs(w - this.lastSentSize.w) < 8 && Math.abs(h - this.lastSentSize.h) < 8) return;
     this.lastSentSize = { w, h };
     client.sendSize(w, h);
   }

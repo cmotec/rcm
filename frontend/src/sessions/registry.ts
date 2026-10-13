@@ -1,6 +1,7 @@
-import { ApiError, errorMessage, get, post, put } from '../api/client';
+import { ApiError, del, errorMessage, get, post, put } from '../api/client';
 import type { HostKeyInfo, Protocol, SessionInfo } from '../api/types';
 import { type AuthOverride, dialogs, type InteractiveCredentials } from '../state/dialogs';
+import { beginConnect, type ConnectHandle } from '../state/connecting';
 import { useWorkspace } from '../state/workspace';
 import {
   type Edge,
@@ -15,6 +16,7 @@ import {
   toSaved,
 } from '../workspace/model';
 import { BaseSession as BaseSessionClass, type BaseSession } from './base';
+import { applySessionPrefs } from './prefs';
 import { FileSession } from './FileSession';
 import { GuacSession } from './GuacSession';
 import { TerminalSession } from './TerminalSession';
@@ -63,35 +65,58 @@ interface ConnectionRef {
  * confirmation, then places the session in the workspace. Returns the session id, or null if cancelled.
  */
 export async function openConnection(conn: ConnectionRef, target: OpenTarget = {}): Promise<string | null> {
+  const loading = beginConnect(conn.name, conn.protocol);
+  try {
+    return await startSession(conn, target, loading);
+  } finally {
+    loading.end();
+  }
+}
+
+/** Ask the user something while the loading card is hidden. */
+async function ask<T>(loading: ConnectHandle, question: () => Promise<T>): Promise<T> {
+  loading.waiting(true);
+  try {
+    return await question();
+  } finally {
+    loading.waiting(false);
+  }
+}
+
+async function startSession(conn: ConnectionRef, target: OpenTarget, loading: ConnectHandle): Promise<string | null> {
   let credentials: InteractiveCredentials | undefined;
   let credentialId: string | undefined;
+  let authOverride = target.authOverride;
   const accepted: { hostname: string; port: number; fingerprint: string }[] = [];
   let info: SessionInfo | null = null;
   for (let attempt = 0; attempt < 8 && !info; attempt++) {
+    if (loading.cancelled) return null;
+    loading.step(attempt === 0 ? 'Preparing the connection…' : 'Starting the session…');
     try {
       info = await post<SessionInfo>('/api/v1/sessions', {
         connection_id: conn.id,
         credentials,
         credential_id: credentialId,
         accept_host_keys: accepted,
-        auth_override: target.authOverride,
+        auth_override: authOverride,
       });
     } catch (err) {
       if (err instanceof ApiError && err.code === 'credential_choice_required') {
-        const chosen = await dialogs.chooseCredential(conn.name);
+        const chosen = await ask(loading, () => dialogs.chooseCredential(conn.name, conn.protocol));
         if (!chosen) return null;
-        credentialId = chosen;
+        if (chosen.mode === 'credential') credentialId = chosen.credential_id;
+        else authOverride = chosen; // typed by the user, this session only
         continue;
       }
       if (err instanceof ApiError && err.code === 'credentials_required') {
         const p = err.problem as unknown as { fields: string[]; username?: string; domain?: string };
-        const entered = await dialogs.credentials({
+        const entered = await ask(loading, () => dialogs.credentials({
           connectionName: conn.name,
           protocol: conn.protocol,
           fields: p.fields,
           username: credentials?.username ?? p.username,
           domain: credentials?.domain ?? p.domain,
-        });
+        }));
         if (!entered) return null;
         credentials = entered;
         continue;
@@ -104,10 +129,10 @@ export async function openConnection(conn: ConnectionRef, target: OpenTarget = {
         }
         const changed = err.code === 'hostkey_changed';
         if (changed && !hk.can_replace) {
-          await dialogs.hostKey(hk, true);
+          await ask(loading, () => dialogs.hostKey(hk, true));
           return null;
         }
-        const ok = await dialogs.hostKey(hk, changed);
+        const ok = await ask(loading, () => dialogs.hostKey(hk, changed));
         if (!ok) return null;
         accepted.push({ hostname: hk.hostname, port: hk.port, fingerprint: hk.fingerprint });
         continue;
@@ -117,6 +142,10 @@ export async function openConnection(conn: ConnectionRef, target: OpenTarget = {
     }
   }
   if (!info) return null;
+  if (loading.cancelled) {
+    await del(`/api/v1/sessions/${info.id}`).catch(() => undefined);
+    return null;
+  }
   const ctrl = createController(info);
   controllers.set(info.id, ctrl);
   ctrl.onEnded = () => void closeSessionById(info!.id);
@@ -175,11 +204,13 @@ export async function loadPreferences(): Promise<Record<string, unknown>> {
   } catch {
     preferences = {};
   }
+  applySessionPrefs(preferences);
   return preferences;
 }
 
 export async function savePreference(key: string, value: unknown): Promise<void> {
   preferences = { ...preferences, [key]: value };
+  applySessionPrefs(preferences);
   await put('/api/v1/me/preferences', { data: preferences }).catch(() => undefined);
 }
 

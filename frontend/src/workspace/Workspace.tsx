@@ -1,4 +1,5 @@
 import { AppWindow, Maximize2, Minimize2, Minus, PanelTop, Radio, X } from 'lucide-react';
+import { ConnectingCards } from './ConnectingCards';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Protocol } from '../api/types';
 import { ProtocolIcon } from '../components/common/icons';
@@ -404,6 +405,7 @@ export function Workspace({ emptyHint }: { emptyHint?: React.ReactNode }) {
           <div className="workspace-empty">{emptyHint}</div>
         )}
         {layout.floats.filter((f) => !f.minimized).map((f) => <FloatingFrame key={f.id} win={f} />)}
+        <ConnectingCards />
         {drop && (
           <div className={`drop-zone ${drop.mode}`} style={drop.box}>
             <span>{drop.mode === 'float' ? 'Floating window' : `Split ${drop.mode}`}</span>

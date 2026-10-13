@@ -75,7 +75,11 @@
 }
 
 * { box-sizing: border-box; }
-html, body, #root { height: 100%; margin: 0; }
+html, body { height: 100%; margin: 0; }
+/* Phones (util/viewport.ts): --app-height follows the visible area above the on-screen keyboard;
+   for a remote desktop the app keeps its size and slides up by --kb-shift instead. */
+#root { height: var(--app-height, 100%); margin: 0; overflow: hidden; }
+html.kb-shift #root { transform: translateY(calc(-1 * var(--kb-shift, 0px))); }
 body { font: 13px/1.45 var(--font); color: var(--text); background: var(--bg); overflow: hidden; }
 h1, h2, h3, h4 { margin: 0; font-weight: 600; }
 h1 { font-size: 17px; } h2 { font-size: 15px; } h3 { font-size: 14px; margin: 16px 0 8px; } h4 { font-size: 13px; margin: 12px 0 6px; }
@@ -388,7 +392,8 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; user-sel
 .tab-broadcast { opacity: 0.55; }
 .tab-broadcast.on { opacity: 1; color: var(--accent); background: var(--accent-soft); }
 .badge.broadcast { background: var(--accent-soft); color: var(--accent); border-color: transparent; }
-.guac-key-input { position: absolute; left: 0; bottom: 0; width: 1px; height: 1px; opacity: 0; border: 0; padding: 0;
+/* at the top: the browser has no reason to scroll it into view above the keyboard */
+.guac-key-input { position: absolute; left: 0; top: 0; width: 1px; height: 1px; opacity: 0; border: 0; padding: 0;
   resize: none; pointer-events: none; }
 .drawer-backdrop { display: none; }
 
@@ -440,7 +445,7 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; user-sel
 
 /* --- touch key bar ----------------------------------------------------------------------- */
 .key-bar { display: flex; gap: 4px; padding: 4px; overflow-x: auto; background: var(--bg-elev);
-  border-bottom: 1px solid var(--border); flex: none; scrollbar-width: none; touch-action: pan-x; }
+  border-top: 1px solid var(--border); flex: none; scrollbar-width: none; touch-action: pan-x; }
 .key-bar .key { flex: none; min-width: 40px; height: 34px; padding: 0 9px; justify-content: center;
   font-size: 13px; font-family: var(--mono); user-select: none; -webkit-user-select: none; }
 .key-bar .key.mod { font-family: var(--font); }
@@ -464,3 +469,22 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; user-sel
 .signage-slot { flex: 1; display: flex; min-width: 0; min-height: 0; }
 .signage-notice { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; gap: 10px;
   padding: 16px; text-align: center; font-size: 15px; background: rgba(0, 0, 0, 0.75); pointer-events: none; }
+
+/* Connections being opened (before the session window exists) */
+.connecting-layer { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center;
+  justify-content: center; gap: 10px; padding: 16px; z-index: 40; pointer-events: none; }
+.connecting-card { pointer-events: auto; display: flex; align-items: center; gap: 12px; min-width: min(320px, 100%);
+  max-width: 100%; padding: 14px 16px; border-radius: 10px; background: var(--bg-elev); color: var(--text);
+  box-shadow: var(--shadow); border: 1px solid var(--border); }
+.connecting-text { flex: 1; min-width: 0; }
+.connecting-name { display: flex; align-items: center; gap: 6px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.overlay-card .overlay-name { display: flex; align-items: center; gap: 6px; font-weight: 600; }
+
+/* A session over the whole app: no menus, tabs or title bar */
+.session-frame.app-fullscreen { position: fixed; inset: 0; z-index: 900; border: 0; border-radius: 0; background: #000; }
+.session-frame.app-fullscreen > .frame-head { display: none; }
+.fullscreen-exit { position: absolute; top: 6px; right: 6px; z-index: 950; display: grid; place-items: center;
+  width: 32px; height: 32px; padding: 0; border: 0; border-radius: 8px; color: #fff; background: rgba(0, 0, 0, 0.45);
+  opacity: 0.25; transition: opacity 0.15s; cursor: pointer; }
+.fullscreen-exit:hover, .fullscreen-exit:focus-visible { opacity: 1; }
+@media (pointer: coarse) { .fullscreen-exit { opacity: 0.7; } }

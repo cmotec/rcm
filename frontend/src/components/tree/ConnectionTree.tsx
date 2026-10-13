@@ -73,6 +73,14 @@ export function ConnectionTree({ actions, tapToOpen = false }: { actions: TreeAc
     if (longPress.current.timer !== null) window.clearTimeout(longPress.current.timer);
     longPress.current.timer = null;
   };
+  /** Finger lifted: after a long press, swallow the click the browser would send to the menu under the finger. */
+  const endLongPress = (e: React.TouchEvent) => {
+    cancelLongPress();
+    if (longPress.current.fired) {
+      e.preventDefault();
+      longPress.current.fired = false;
+    }
+  };
   const startLongPress = (e: React.TouchEvent, showMenu: (x: number, y: number) => void) => {
     cancelLongPress();
     longPress.current.fired = false;
@@ -368,7 +376,7 @@ export function ConnectionTree({ actions, tapToOpen = false }: { actions: TreeAc
           onClick={(e) => onRowClick(e, n)}
           onTouchStart={(e) => startLongPress(e, showMenu)}
           onTouchMove={cancelLongPress}
-          onTouchEnd={cancelLongPress}
+          onTouchEnd={endLongPress}
           onTouchCancel={cancelLongPress}
           onDoubleClick={(e) => !e.ctrlKey && !e.metaKey && !e.shiftKey && n.type === 'connection' && open(n.conn)}
           onContextMenu={onContext}
