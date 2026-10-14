@@ -444,6 +444,27 @@ export class GuacSession extends BaseSession implements SpecialKeyTarget {
     tunnel.onerror = (status) => {
       this.lastError = this.lastError ?? status;
     };
+    // Guacamole.Client only notices a disconnect that guacd announces. A connection that just dies
+    // (laptop asleep, Wi-Fi gone, proxy restart) only closes the tunnel, after its 15 s receive
+    // timeout, while the last frame stays on screen: handle that here.
+    tunnel.onstatechange = (state) => {
+      if (state !== Guacamole.Tunnel.State.CLOSED) return;
+      if (this.client !== client || this.tearingDown || this.userClosed || this.guacState === 5) return;
+      this.guacState = 5;
+      const err = this.lastError;
+      if (!err) {
+        // closed cleanly by the server: taken over in another window, or ended on the server.
+        // No automatic reconnect (two windows would keep taking the session from each other).
+        this.setStatus('disconnected', 'The connection was closed by the server');
+      } else if (ENDED_CODES.has(err.code)) {
+        this.ended(err.message || 'Disconnected');
+      } else if (FATAL_CODES.has(err.code)) {
+        this.setStatus('error', err.message || 'Connection failed');
+      } else {
+        this.scheduleReconnect(err.code === Guacamole.Status.Code.UPSTREAM_TIMEOUT
+          ? 'Connection lost (no response)' : err.message || 'Connection lost');
+      }
+    };
 
     const size = remoteSize(cssWidth, cssHeight);
     const params = new URLSearchParams({

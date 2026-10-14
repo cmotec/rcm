@@ -23,10 +23,16 @@ const THEMES: Record<string, { background: string; foreground: string; cursor?: 
 };
 
 /** Native SSH terminal (xterm.js ↔ WebSocket ↔ asyncssh). */
+const HEARTBEAT_INTERVAL_MS = 10_000;
+const HEARTBEAT_TIMEOUT_MS = 30_000;
+
 export class TerminalSession extends BaseSession implements SpecialKeyTarget {
   private term: Terminal | null = null;
   private fit: FitAddon | null = null;
   private ws: WebSocket | null = null;
+  /** Heartbeat: a dead connection (laptop asleep, network gone) often never fires "close". */
+  private heartbeat: number | null = null;
+  private lastReceived = 0;
   private host: HTMLDivElement;
   private pendingTicket: string | null;
   private encoder = new TextEncoder();
@@ -97,6 +103,7 @@ export class TerminalSession extends BaseSession implements SpecialKeyTarget {
     let fatal: string | null = null;
     let exited = false;
     ws.onmessage = (ev) => {
+      this.lastReceived = Date.now();
       if (typeof ev.data !== 'string') {
         term.write(new Uint8Array(ev.data as ArrayBuffer));
         return;
@@ -105,6 +112,7 @@ export class TerminalSession extends BaseSession implements SpecialKeyTarget {
       if (msg.type === 'status' && msg.state === 'connected') {
         this.connectionEstablished();
         this.fit?.fit();
+        this.startHeartbeat(ws);
       } else if (msg.type === 'error') {
         fatal = msg.message ?? 'error';
         term.write(`\r\n\x1b[31m${fatal}\x1b[0m\r\n`);
@@ -116,6 +124,7 @@ export class TerminalSession extends BaseSession implements SpecialKeyTarget {
     };
     ws.onclose = (ev) => {
       if (this.ws !== ws || this.userClosed) return;
+      this.stopHeartbeat();
       this.ws = null;
       if (exited) this.ended('Remote shell exited');
       else if (this.snapshot.status === 'error') return;
@@ -179,7 +188,31 @@ export class TerminalSession extends BaseSession implements SpecialKeyTarget {
     return this.term?.getSelection() ?? '';
   }
 
+  /** Ping every 10 s once connected (the server answers "pong"); 30 s of silence = connection lost. */
+  private startHeartbeat(ws: WebSocket): void {
+    this.stopHeartbeat();
+    this.lastReceived = Date.now();
+    this.heartbeat = window.setInterval(() => {
+      if (this.ws !== ws) {
+        this.stopHeartbeat();
+        return;
+      }
+      if (Date.now() - this.lastReceived > HEARTBEAT_TIMEOUT_MS) {
+        this.closeSocket();
+        if (!this.userClosed) this.scheduleReconnect('Connection lost (no response)');
+        return;
+      }
+      if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'ping' }));
+    }, HEARTBEAT_INTERVAL_MS);
+  }
+
+  private stopHeartbeat(): void {
+    if (this.heartbeat !== null) window.clearInterval(this.heartbeat);
+    this.heartbeat = null;
+  }
+
   private closeSocket(): void {
+    this.stopHeartbeat();
     if (this.ws) {
       const ws = this.ws;
       this.ws = null;
