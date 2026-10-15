@@ -166,6 +166,9 @@ class Settings(BaseSettings):
     OPENBAO_ROLE_ID: str | None = None
     OPENBAO_SECRET_ID: str | None = None
     OPENBAO_KV_MOUNT: str = "secret"
+    # every secret below OPENBAO_IMPORT_PATH becomes a credential entry (named after the secret)
+    OPENBAO_AUTO_IMPORT: bool = False
+    OPENBAO_IMPORT_PATH: str = ""
 
     # --- limits & features -----------------------------------------------------
     RATE_LIMIT_LOGIN_PER_MINUTE: int = 10

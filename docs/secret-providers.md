@@ -22,7 +22,40 @@ Adding another provider: implement `SecretProviderClient` (`test`, `get`, `brows
 ## Mapping
 
 In the credential store, open a credential → *External secrets*. Add one row per field: the
-provider, path, key and policies. *Save & sync* stores the mapping and synchronises immediately.
+provider, path, key and policies; the magnifier button browses the provider (names only, never
+values; needs `secrets.manage`). A key without a name is entered as an empty key. *Save & sync*
+stores the mapping and synchronises immediately.
+
+## Automatic import (OpenBao)
+
+With *Create credentials automatically* (`auto_import`, or `OPENBAO_AUTO_IMPORT=true` for the
+provider from environment variables), every full sync walks the KV mount, or only the part below
+*import path* (`OPENBAO_IMPORT_PATH`):
+
+* each secret becomes a credential named after the secret (last path segment);
+* its keys are matched to the credential fields by name, ignoring case, `_`, `-` and spaces:
+
+  | Field | Keys |
+  |---|---|
+  | username | `username`, `user`, `login`, `userid`, `account`, `benutzer`, `benutzername` |
+  | password | `password`, `pass`, `passwd`, `pwd`, `secret`, `kennwort`, `passwort` |
+  | domain | `domain`, `domäne`, `ntdomain`, `userdomain` |
+  | private_key | `private_key`, `ssh_key`, `key`, `id_rsa`, `id_ed25519` |
+  | passphrase | `passphrase`, `key_passphrase`, `ssh_passphrase` |
+
+  A secret with a single key that matches none of these, for example a key without a name, is
+  taken as the password. Secrets without any usable key are skipped.
+* the matched keys become mappings and the sync fills in the values. Keys added to a secret later
+  get mappings on the next sync.
+* a credential that already has the secret's name, and is not linked to this provider yet, is linked
+  instead of creating a second one. Local values that differ become conflicts; nothing is
+  overwritten silently.
+* credentials are never deleted by the import. When a secret is removed, its mappings show
+  `remote_missing`. A deleted auto-imported credential comes back on the next sync while the secret
+  still exists; limit the import with *import path* instead.
+
+New credentials belong to the user who started the sync; scheduled syncs create them without an
+owner, so only administrators (and explicit grants) see them until permissions are set.
 
 ## Synchronisation and conflicts
 

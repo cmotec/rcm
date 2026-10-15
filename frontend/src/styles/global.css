@@ -488,3 +488,9 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; user-sel
   opacity: 0.25; transition: opacity 0.15s; cursor: pointer; }
 .fullscreen-exit:hover, .fullscreen-exit:focus-visible { opacity: 1; }
 @media (pointer: coarse) { .fullscreen-exit { opacity: 0.7; } }
+
+/* Secret provider browser */
+.secret-path { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; overflow-wrap: anywhere; }
+.secret-list li { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.secret-list li span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.row.nowrap { flex-wrap: nowrap; margin: 0; gap: 4px; }

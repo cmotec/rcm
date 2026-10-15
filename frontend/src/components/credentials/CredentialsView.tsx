@@ -7,6 +7,7 @@ import { dialogs } from '../../state/dialogs';
 import { formatDate } from '../../util/download';
 import { AclDialog } from '../dialogs/AclDialog';
 import { Modal } from '../common/Modal';
+import { SecretBrowser } from './SecretBrowser';
 
 type SecretField = 'password' | 'private_key' | 'passphrase';
 
@@ -152,6 +153,7 @@ function MappingsDialog({ credential, onClose }: { credential: Credential; onClo
   const [mappings, setMappings] = useState<SecretMapping[]>([]);
   const [draft, setDraft] = useState<{ field: string; provider_id: string; path: string; key: string; conflict_policy: string; delete_policy: string }[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [browsing, setBrowsing] = useState<number | null>(null);
 
   const load = async () => {
     const [p, m] = await Promise.all([
@@ -213,8 +215,16 @@ function MappingsDialog({ credential, onClose }: { credential: Credential; onClo
                 <td><select value={d.provider_id} onChange={(e) => set({ provider_id: e.target.value })}>
                   {providers.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
                 </select></td>
-                <td><input value={d.path} onChange={(e) => set({ path: e.target.value })} placeholder="/ or secret/path" /></td>
-                <td><input value={d.key} onChange={(e) => set({ key: e.target.value })} placeholder="KEY" /></td>
+                <td>
+                  <div className="row nowrap">
+                    <input value={d.path} onChange={(e) => set({ path: e.target.value })} placeholder="/ or secret/path" />
+                    <button className="icon-btn" title="Browse the provider" disabled={!d.provider_id} onClick={() => setBrowsing(i)}>
+                      <Search size={14} />
+                    </button>
+                  </div>
+                </td>
+                <td><input value={d.key} onChange={(e) => set({ key: e.target.value })} placeholder="(no name)"
+                           title="Name of the key inside the secret; leave empty for a key without a name" /></td>
                 <td><select value={d.conflict_policy} onChange={(e) => set({ conflict_policy: e.target.value })}>
                   <option value="manual">Ask (manual)</option><option value="prefer_remote">Remote wins</option><option value="prefer_local">Local wins</option>
                 </select></td>
@@ -238,6 +248,15 @@ function MappingsDialog({ credential, onClose }: { credential: Credential; onClo
       </table>
       <button disabled={!providers.length} onClick={() => setDraft([...draft, { field: 'password', provider_id: providers[0]?.id ?? '', path: '/', key: '',
         conflict_policy: 'manual', delete_policy: 'keep' }])}><Plus size={14} /> Add mapping</button>
+      {browsing !== null && draft[browsing] && providers.find((p) => p.id === draft[browsing].provider_id) && (
+        <SecretBrowser provider={providers.find((p) => p.id === draft[browsing].provider_id)!}
+                       initialPath={draft[browsing].path === '/' ? '' : draft[browsing].path}
+                       onClose={() => setBrowsing(null)}
+                       onPick={(path, key) => {
+                         setDraft(draft.map((x, j) => (j === browsing ? { ...x, path, key } : x)));
+                         setBrowsing(null);
+                       }} />
+      )}
     </Modal>
   );
 }

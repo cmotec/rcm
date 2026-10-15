@@ -320,6 +320,18 @@ function SecretsSection() {
   );
 }
 
+interface ProviderField {
+  key: string;
+  label: string;
+  placeholder?: string;
+  /** [value, label] pairs: shown as a dropdown */
+  options?: [string, string][];
+  defaultValue?: string;
+  /** a checkbox (stored as true/false) */
+  kind?: 'bool';
+  hint?: string;
+}
+
 function ProviderDialog({ provider, onClose }: { provider?: SecretProvider; onClose: () => void }) {
   const [type, setType] = useState<'infisical' | 'openbao'>(provider?.type ?? 'openbao');
   const [name, setName] = useState(provider?.name ?? '');
@@ -329,15 +341,38 @@ function ProviderDialog({ provider, onClose }: { provider?: SecretProvider; onCl
   const [enabled, setEnabled] = useState(provider?.enabled ?? true);
   const [error, setError] = useState<string | null>(null);
   const locked = provider?.managed_by_env;
-  const configFields = type === 'infisical'
-    ? [['url', 'URL'], ['project_id', 'Project ID'], ['environment', 'Environment slug']]
-    : [['url', 'URL'], ['namespace', 'Namespace (optional)'], ['mount', 'KV mount'], ['kv_version', 'KV version (1 or 2)'], ['auth_method', 'Auth method (token / approle)']];
+  const approle = type === 'openbao' && config.auth_method === 'approle';
+  const configFields: ProviderField[] = type === 'infisical'
+    ? [{ key: 'url', label: 'URL' }, { key: 'project_id', label: 'Project ID' }, { key: 'environment', label: 'Environment slug' }]
+    : [
+      { key: 'url', label: 'URL', placeholder: 'https://bao.example.com:8200' },
+      { key: 'namespace', label: 'Namespace (optional)' },
+      { key: 'mount', label: 'KV mount (name of the secrets engine)', placeholder: 'secret' },
+      { key: 'kv_version', label: 'KV version', options: [['2', 'KV version 2'], ['1', 'KV version 1']], defaultValue: '2' },
+      { key: 'auth_method', label: 'Auth method', options: [['token', 'Token'], ['approle', 'AppRole']], defaultValue: 'token' },
+      ...(approle ? [{ key: 'approle_mount', label: 'AppRole mount path', placeholder: 'approle' }] : []),
+      { key: 'auto_import', label: 'Create credentials automatically', kind: 'bool',
+        hint: 'Each secret becomes a credential named after it. Keys such as username, password, domain, private_key '
+          + 'are matched to the credential fields; a secret with a single key (also without a name) is its password.' },
+      ...(config.auto_import === 'true'
+        ? [{ key: 'import_path', label: 'Only secrets below this path (optional)', placeholder: 'e.g. servers/ (empty = whole mount)' }]
+        : []),
+    ];
   const secretFields = type === 'infisical' ? [['client_id', 'Universal Auth client ID'], ['client_secret', 'Client secret']]
-    : [['token', 'Token'], ['role_id', 'AppRole role_id'], ['secret_id', 'AppRole secret_id']];
+    : approle ? [['role_id', 'AppRole role_id'], ['secret_id', 'AppRole secret_id']] : [['token', 'Token']];
   const save = async () => {
     const cfg: Record<string, unknown> = {};
-    for (const [k] of configFields) if (config[k]) cfg[k] = k === 'kv_version' ? Number(config[k]) : config[k];
-    const sec = Object.fromEntries(Object.entries(secrets).filter(([, v]) => v));
+    for (const f of configFields) {
+      if (f.kind === 'bool') {
+        cfg[f.key] = config[f.key] === 'true';
+        continue;
+      }
+      const v = config[f.key] || f.defaultValue;
+      if (v) cfg[f.key] = f.key === 'kv_version' ? Number(v) : v;
+    }
+    // only the credentials of the chosen auth method
+    const shown = new Set(secretFields.map(([k]) => k));
+    const sec = Object.fromEntries(Object.entries(secrets).filter(([k, v]) => v && shown.has(k)));
     try {
       if (provider) await patch(`/api/v1/secret-providers/${provider.id}`, locked ? { enabled, sync_interval_seconds: Number(interval) }
         : { name, config: cfg, secrets: sec, enabled, sync_interval_seconds: Number(interval) });
@@ -354,8 +389,22 @@ function ProviderDialog({ provider, onClose }: { provider?: SecretProvider; onCl
       <label className="field"><span>Name</span><input value={name} disabled={locked} onChange={(e) => setName(e.target.value)} /></label>
       {!provider && <label className="field"><span>Type</span><select value={type} onChange={(e) => setType(e.target.value as 'infisical' | 'openbao')}>
         <option value="openbao">OpenBao (Vault-compatible)</option><option value="infisical">Infisical</option></select></label>}
-      {configFields.map(([k, label]) => (
-        <label key={k} className="field"><span>{label}</span><input value={config[k] ?? ''} disabled={locked} onChange={(e) => setConfig({ ...config, [k]: e.target.value })} /></label>
+      {configFields.map((f) => f.kind === 'bool' ? (
+        <label key={f.key} className="check">
+          <input type="checkbox" checked={config[f.key] === 'true'} disabled={locked}
+                 onChange={(e) => setConfig({ ...config, [f.key]: String(e.target.checked) })} />
+          <span>{f.label}</span>{f.hint && <small className="muted">{f.hint}</small>}
+        </label>
+      ) : (
+        <label key={f.key} className="field"><span>{f.label}</span>
+          {f.options ? (
+            <select value={config[f.key] || f.defaultValue || ''} disabled={locked} onChange={(e) => setConfig({ ...config, [f.key]: e.target.value })}>
+              {f.options.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+            </select>
+          ) : (
+            <input value={config[f.key] ?? ''} placeholder={f.placeholder} disabled={locked} onChange={(e) => setConfig({ ...config, [f.key]: e.target.value })} />
+          )}
+        </label>
       ))}
       {secretFields.map(([k, label]) => (
         <label key={k} className="field"><span>{label}{provider?.secret_fields_set.includes(k) ? ' (stored — leave empty to keep)' : ''}</span>
