@@ -168,7 +168,17 @@ export function openSession(layout: Layout, sessionId: string, opts: { floating?
 }
 
 export function closeSession(layout: Layout, sessionId: string): Layout {
-  return detach(layout, sessionId);
+  const next = detach(layout, sessionId);
+  if (layout.focusedSessionId !== sessionId) return next;
+  // The focus moves on, so typing continues right away: to the neighbouring pane of a split, else the
+  // tab now shown, else the top floating window (a closed floating window prefers the one below it).
+  const was = placementOf(layout, sessionId);
+  const sameTab = was.where === 'tab' ? next.tabs.find((t) => t.id === was.tabId) : undefined;
+  const shownTab = sameTab ?? next.tabs.find((t) => t.id === next.activeTabId);
+  const inTab = shownTab ? leaves(shownTab.root)[0] : undefined;
+  const topFloat = next.floats.filter((f) => !f.minimized).sort((a, b) => b.z - a.z)[0]?.sessionId;
+  const focus = was.where === 'float' ? topFloat ?? inTab : inTab ?? topFloat;
+  return { ...next, focusedSessionId: focus ?? null };
 }
 
 export function activateTab(layout: Layout, tabId: string): Layout {

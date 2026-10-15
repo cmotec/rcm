@@ -111,4 +111,26 @@ describe('workspace layout model', () => {
     const partial = fromSaved(saved, (c) => (c === 'c2' ? undefined : reopened[c]));
     expect(partial.tabs[0].root).toEqual({ kind: 'leaf', sessionId: 'n1' });
   });
+
+  it('moves the focus on when the focused session is closed', () => {
+    // split neighbour first
+    let l = openSession(emptyLayout(), 's1');
+    l = openSession(l, 's2');
+    l = splitWith(l, 's1', 's3', 'right');
+    l = { ...l, focusedSessionId: 's3' };
+    expect(closeSession(l, 's3').focusedSessionId).toBe('s1');
+    // a closed tab hands the focus to the tab shown next
+    l = { ...openSession(openSession(emptyLayout(), 'a'), 'b') };
+    expect(l.focusedSessionId).toBe('b');
+    const afterTab = closeSession(l, 'b');
+    expect(afterTab.focusedSessionId).toBe(leaves(afterTab.tabs.find((t) => t.id === afterTab.activeTabId)!.root)[0]);
+    // a closed floating window hands the focus to the window below it
+    l = openSession(emptyLayout(), 'tab');
+    l = floatSession(openSession(l, 'f1'), 'f1', rect);
+    l = floatSession(openSession(l, 'f2'), 'f2', rect);
+    expect(l.focusedSessionId).toBe('f2');
+    expect(closeSession(l, 'f2').focusedSessionId).toBe('f1');
+    // closing a session that is not focused leaves the focus alone
+    expect(closeSession(l, 'tab').focusedSessionId).toBe('f2');
+  });
 });

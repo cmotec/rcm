@@ -30,6 +30,7 @@ export class TerminalSession extends BaseSession implements SpecialKeyTarget {
   private term: Terminal | null = null;
   private fit: FitAddon | null = null;
   private ws: WebSocket | null = null;
+  private focusWhenReady = false;
   /** Heartbeat: a dead connection (laptop asleep, network gone) often never fires "close". */
   private heartbeat: number | null = null;
   private lastReceived = 0;
@@ -45,6 +46,16 @@ export class TerminalSession extends BaseSession implements SpecialKeyTarget {
     this.host.className = 'terminal-host';
     this.element.appendChild(this.host);
     this.element.addEventListener('focus', () => this.term?.focus());
+  }
+
+  /** Keyboard input goes to xterm's own text field; before the terminal exists, remember the wish. */
+  override focus(): void {
+    if (this.term) {
+      this.term.focus();
+      return;
+    }
+    this.focusWhenReady = true;
+    super.focus();
   }
 
   private get settings() {
@@ -77,6 +88,11 @@ export class TerminalSession extends BaseSession implements SpecialKeyTarget {
     term.onResize(({ cols, rows }) => this.sendControl({ type: 'resize', cols, rows }));
     this.term = term;
     this.fit = fit;
+    // focused before the terminal existed (a new session): take the keyboard now, unless the user has
+    // moved on to something else in the meantime
+    const active = document.activeElement;
+    if (this.element.contains(active) || (this.focusWhenReady && (!active || active === document.body))) term.focus();
+    this.focusWhenReady = false;
     if (this.pendingTicket) {
       const t = this.pendingTicket;
       this.pendingTicket = null;
