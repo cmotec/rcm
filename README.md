@@ -12,7 +12,7 @@ all in the browser.
 * **Gateway:** Apache Guacamole **guacd** for RDP/VNC (the Guacamole web application is not used)
 * **Database:** external PostgreSQL
 * **Auth:** OIDC (Authentik), optional local recovery admin
-* **Secrets:** AES-256-GCM at rest; optional sync from Infisical / OpenBao
+* **Secrets:** AES-256-GCM at rest; optional sync from OpenBao (Vault-compatible)
 
 ## Features
 
@@ -28,7 +28,7 @@ all in the browser.
 * Workspace: each session opens as a full-size tab; drag tabs into floating windows
   (move/resize/minimise/maximise) or onto an edge to split; resizable dividers; layout restore
 * RBAC (admin / user / read-only + custom roles) with resource ACLs and IdP group mapping
-* Credential store with audited reveal, rotation reminders, parent inheritance, Infisical/OpenBao sync
+* Credential store with audited reveal, rotation reminders, parent inheritance, OpenBao sync with automatic import
   with explicit conflict handling
 * Devolutions RDM import (`.rdm` XML, CSV) with preview, duplicate detection and a report of
   unsupported settings; encrypted passwords are never decrypted

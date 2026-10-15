@@ -59,7 +59,7 @@ The complete, generated specification is in [openapi.json](openapi.json)
 | GET | `/credentials/{id}/usage` | referencing connections and child credentials |
 | GET/PUT | `/credentials/{id}/mappings` | external secret mappings per field |
 | POST | `/secret-mappings/{id}/resolve` | resolve a sync conflict (`accept_remote` / `keep_local`) |
-| GET/POST | `/secret-providers` | providers (Infisical, OpenBao) |
+| GET/POST | `/secret-providers` | providers (OpenBao) |
 | PATCH/DELETE | `/secret-providers/{id}` | update / remove |
 | POST | `/secret-providers/{id}/test` | connectivity & auth check |
 | GET | `/secret-providers/{id}/browse?path=` | list secret names (never values) |

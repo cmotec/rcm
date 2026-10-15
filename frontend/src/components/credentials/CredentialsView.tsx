@@ -200,7 +200,7 @@ function MappingsDialog({ credential, onClose }: { credential: Credential; onClo
              <button onClick={onClose}>Close</button>
              <button className="primary" disabled={!providers.length} onClick={save}>Save & sync</button>
            </>}>
-      {!providers.length && <p className="muted">No secret providers are configured. An administrator can add Infisical or OpenBao under Administration → Secret providers.</p>}
+      {!providers.length && <p className="muted">No secret providers are configured. An administrator can add OpenBao under Administration → Secret providers.</p>}
       <table className="grid">
         <thead><tr><th>Field</th><th>Provider</th><th>Path</th><th>Key</th><th>On conflict</th><th>On remote delete</th><th>Status</th><th /></tr></thead>
         <tbody>

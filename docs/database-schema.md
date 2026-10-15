@@ -39,7 +39,7 @@ known_hosts · audit_events · session_records · app_settings · import_jobs ·
 | `credentials` | credential store | all fields optional; `password_enc`, `private_key_enc`, `passphrase_enc`; `parent_id` inheritance; `metadata jsonb`; `rotation_interval_days`, `secret_changed_at` |
 | `acl_entries` | resource grants | `resource_type` ∈ folder/connection/credential (all-zero UUID = root); `principal_type` ∈ user/group/role; `permission` ∈ view/connect/edit/manage; unique per (resource, principal) |
 | `known_hosts` | trusted SSH host keys | unique (hostname, port, key_type); `fingerprint` (SHA256), `public_key` |
-| `secret_providers` | Infisical / OpenBao | `config jsonb` (non-secret), `secret_config_enc`, `managed_by_env`, sync status |
+| `secret_providers` | OpenBao (Vault-compatible) | `config jsonb` (non-secret), `secret_config_enc`, `managed_by_env`, sync status |
 | `secret_mappings` | credential field ← external secret | unique (credential_id, field); `external_ref jsonb`; `conflict_policy`, `delete_policy`; `remote_hash`/`local_hash` (SHA-256 fingerprints for change detection); `pending_remote_enc` (value waiting for conflict resolution) |
 | `sync_runs` | sync history | `stats jsonb`, `status`, `error` |
 | `audit_events` | audit log | bigint identity; `actor_*`, `action`, `resource_*`, `outcome` ∈ success/failure/denied, `ip`, `request_id`, `details jsonb` (redacted); indexes on ts, actor+ts, resource, action |

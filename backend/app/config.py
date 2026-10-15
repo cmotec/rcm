@@ -19,7 +19,6 @@ SECRET_SETTINGS = (
     "ENCRYPTION_KEYS",
     "OIDC_CLIENT_SECRET",
     "LOCAL_ADMIN_PASSWORD",
-    "INFISICAL_CLIENT_SECRET",
     "OPENBAO_TOKEN",
     "OPENBAO_SECRET_ID",
 )
@@ -152,12 +151,6 @@ class Settings(BaseSettings):
     # --- external secret providers ------------------------------------------
     SECRET_SYNC_ENABLED: bool = True
     SECRET_SYNC_DEFAULT_INTERVAL_SECONDS: int = 900
-    INFISICAL_ENABLED: bool = True
-    INFISICAL_URL: str | None = None
-    INFISICAL_CLIENT_ID: str | None = None
-    INFISICAL_CLIENT_SECRET: str | None = None
-    INFISICAL_PROJECT_ID: str | None = None
-    INFISICAL_ENVIRONMENT: str | None = None
     OPENBAO_ENABLED: bool = True
     OPENBAO_URL: str | None = None
     OPENBAO_NAMESPACE: str | None = None

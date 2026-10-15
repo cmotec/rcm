@@ -289,7 +289,7 @@ function SecretsSection() {
   const refresh = () => void qc.invalidateQueries({ queryKey: ['secret-providers'] });
   return (
     <>
-      <p className="muted">Synchronise credential fields from Infisical or OpenBao. Synchronisation is one-way (external → local) and never
+      <p className="muted">Synchronise credential fields from OpenBao (or another Vault-compatible server). Synchronisation is one-way (external → local) and never
         silently overwrites local changes: conflicting values wait for a decision in the credential’s “External secrets” dialog.</p>
       <button className="primary" onClick={() => setEditing('new')}><Plus size={14} /> Add provider</button>
       <table className="grid">
@@ -333,7 +333,6 @@ interface ProviderField {
 }
 
 function ProviderDialog({ provider, onClose }: { provider?: SecretProvider; onClose: () => void }) {
-  const [type, setType] = useState<'infisical' | 'openbao'>(provider?.type ?? 'openbao');
   const [name, setName] = useState(provider?.name ?? '');
   const [config, setConfig] = useState<Record<string, string>>(Object.fromEntries(Object.entries(provider?.config ?? {}).map(([k, v]) => [k, String(v ?? '')])));
   const [secrets, setSecrets] = useState<Record<string, string>>({});
@@ -341,10 +340,8 @@ function ProviderDialog({ provider, onClose }: { provider?: SecretProvider; onCl
   const [enabled, setEnabled] = useState(provider?.enabled ?? true);
   const [error, setError] = useState<string | null>(null);
   const locked = provider?.managed_by_env;
-  const approle = type === 'openbao' && config.auth_method === 'approle';
-  const configFields: ProviderField[] = type === 'infisical'
-    ? [{ key: 'url', label: 'URL' }, { key: 'project_id', label: 'Project ID' }, { key: 'environment', label: 'Environment slug' }]
-    : [
+  const approle = config.auth_method === 'approle';
+  const configFields: ProviderField[] = [
       { key: 'url', label: 'URL', placeholder: 'https://bao.example.com:8200' },
       { key: 'namespace', label: 'Namespace (optional)' },
       { key: 'mount', label: 'KV mount (name of the secrets engine)', placeholder: 'secret' },
@@ -358,8 +355,7 @@ function ProviderDialog({ provider, onClose }: { provider?: SecretProvider; onCl
         ? [{ key: 'import_path', label: 'Only secrets below this path (optional)', placeholder: 'e.g. servers/ (empty = whole mount)' }]
         : []),
     ];
-  const secretFields = type === 'infisical' ? [['client_id', 'Universal Auth client ID'], ['client_secret', 'Client secret']]
-    : approle ? [['role_id', 'AppRole role_id'], ['secret_id', 'AppRole secret_id']] : [['token', 'Token']];
+  const secretFields = approle ? [['role_id', 'AppRole role_id'], ['secret_id', 'AppRole secret_id']] : [['token', 'Token']];
   const save = async () => {
     const cfg: Record<string, unknown> = {};
     for (const f of configFields) {
@@ -376,19 +372,17 @@ function ProviderDialog({ provider, onClose }: { provider?: SecretProvider; onCl
     try {
       if (provider) await patch(`/api/v1/secret-providers/${provider.id}`, locked ? { enabled, sync_interval_seconds: Number(interval) }
         : { name, config: cfg, secrets: sec, enabled, sync_interval_seconds: Number(interval) });
-      else await post('/api/v1/secret-providers', { name, type, config: cfg, secrets: sec, enabled, sync_interval_seconds: Number(interval) });
+      else await post('/api/v1/secret-providers', { name, type: 'openbao', config: cfg, secrets: sec, enabled, sync_interval_seconds: Number(interval) });
       onClose();
     } catch (err) {
       setError(errorMessage(err));
     }
   };
   return (
-    <Modal title={provider ? `Provider ${provider.name}` : 'Add secret provider'} onClose={onClose} width={520}
+    <Modal title={provider ? `Provider ${provider.name}` : 'Add OpenBao provider'} onClose={onClose} width={520}
            footer={<>{error && <span className="form-error">{error}</span>}<button onClick={onClose}>Cancel</button><button className="primary" onClick={save}>Save</button></>}>
       {locked && <div className="banner info">Configured through environment variables; only enable/interval can be changed here.</div>}
       <label className="field"><span>Name</span><input value={name} disabled={locked} onChange={(e) => setName(e.target.value)} /></label>
-      {!provider && <label className="field"><span>Type</span><select value={type} onChange={(e) => setType(e.target.value as 'infisical' | 'openbao')}>
-        <option value="openbao">OpenBao (Vault-compatible)</option><option value="infisical">Infisical</option></select></label>}
       {configFields.map((f) => f.kind === 'bool' ? (
         <label key={f.key} className="check">
           <input type="checkbox" checked={config[f.key] === 'true'} disabled={locked}

@@ -163,7 +163,7 @@ browsers will not send them over HTTP.
 | What | Where it validates | How to add a private CA |
 |---|---|---|
 | RDP server certificates | FreeRDP inside **guacd** | mount a bundle (system CAs + yours) over `/etc/ssl/certs/ca-certificates.crt` in the guacd service (see the comment in `docker-compose.yml`) |
-| FTPS, OIDC, Infisical/OpenBao | api container | mount a bundle and set `TLS_CA_BUNDLE=/path/in/container` |
+| FTPS, OIDC, OpenBao | api container | mount a bundle and set `TLS_CA_BUNDLE=/path/in/container` |
 | PostgreSQL | api container | mount the CA and set `DB_SSLROOTCERT`, `DB_SSLMODE=verify-full` |
 
 ## 7. Docker secrets instead of environment variables

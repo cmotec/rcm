@@ -33,7 +33,7 @@ floating windows or split views in one browser workspace.
    │    SSH terminal  (asyncssh)    ───────────────────────►  SSH hosts
    │    SFTP          (asyncssh)    ───────────────────────►  SFTP hosts
    │    FTP/FTPS      (ftplib, threads) ───────────────────►  FTP hosts
-   │  secret sync (Infisical, OpenBao) ────────────────────►  secret stores
+   │  secret sync (OpenBao / Vault) ────────────────────────►  secret stores
    │  RDM import, audit log, background jobs                  │
    └──────────┬─────────────────────────────┬─────────────────┘
               │ asyncpg (TLS optional)      │ (private network "gateway")
@@ -166,7 +166,7 @@ backend/app
 │   ├── oidc.py
 │   ├── sessions/        manager, guacd protocol client, parameter builders,
 │   │                    SSH terminal, SFTP and FTP file systems
-│   ├── secrets/         provider interface, Infisical, OpenBao, sync engine
+│   ├── secrets/         provider interface, OpenBao, automatic import, sync engine
 │   └── importers/       Devolutions RDM (.rdm XML, CSV)
 ├── jobs.py              background scheduler (session reaper, secret sync)
 └── cli.py               migrations, recovery admin, key rotation

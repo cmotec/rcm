@@ -60,7 +60,7 @@ RDM stores passwords encrypted (`SafePassword`, data-source or export keys). The
 not attempt to decrypt them or bypass that protection.** Affected connections are imported without
 a password and listed in the report. To migrate them, do one of the following:
 
-1. Create the credentials in the credential store (or map them to Infisical/OpenBao), then set
+1. Create the credentials in the credential store (or map them to OpenBao), then set
    the connection's authentication to *Credential store*.
 2. Or switch the connection to *Ask when connecting*, so users type the password at launch.
 3. Private-key files referenced by path in RDM live on the old client machine. Paste the keys into

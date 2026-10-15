@@ -36,12 +36,11 @@ from app.services import audit
 from app.services.auth import now
 from app.services.secrets.base import ProviderError, SecretProviderClient, SecretRef
 from app.services.secrets.discovery import discover
-from app.services.secrets.infisical import InfisicalClient
 from app.services.secrets.openbao import OpenBaoClient
 
 log = get_logger(__name__)
 
-PROVIDERS: dict[str, type[SecretProviderClient]] = {"infisical": InfisicalClient, "openbao": OpenBaoClient}
+PROVIDERS: dict[str, type[SecretProviderClient]] = {"openbao": OpenBaoClient}
 ADVISORY_LOCK_BASE = 0x5EC0_0000
 
 
@@ -244,11 +243,6 @@ async def resolve_conflict(db: AsyncSession, mp: m.SecretMapping, action: str) -
 async def ensure_env_providers(db: AsyncSession, settings: Settings) -> None:
     """Create/update providers configured through environment variables (read-only in the UI)."""
     specs: list[tuple[str, str, dict[str, Any], dict[str, Any]]] = []
-    if settings.INFISICAL_ENABLED and settings.INFISICAL_URL and settings.INFISICAL_CLIENT_ID:
-        specs.append(("Infisical (environment)", "infisical",
-                      {"url": settings.INFISICAL_URL, "project_id": settings.INFISICAL_PROJECT_ID or "",
-                       "environment": settings.INFISICAL_ENVIRONMENT or "prod"},
-                      {"client_id": settings.INFISICAL_CLIENT_ID, "client_secret": settings.INFISICAL_CLIENT_SECRET}))
     if settings.OPENBAO_ENABLED and settings.OPENBAO_URL:
         specs.append(("OpenBao (environment)", "openbao",
                       {"url": settings.OPENBAO_URL, "namespace": settings.OPENBAO_NAMESPACE,

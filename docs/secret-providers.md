@@ -1,18 +1,18 @@
-# External secret managers (Infisical, OpenBao)
+# External secrets (OpenBao / Vault)
 
 Credential entries can take individual fields (username, password, domain, private key,
-passphrase) from an external secret manager. Synchronisation is optional, runs one way
+passphrase) from OpenBao, or another server with the Vault KV API (HashiCorp Vault).
+The KV secrets engine (v1 or v2) is read with a token or AppRole. Synchronisation is optional, runs one way
 (external → local) and never silently overwrites local changes.
 
 ## Providers
 
 | Provider | Auth | Secret reference (`external_ref`) |
 |---|---|---|
-| Infisical | Universal Auth (client ID + secret) | `{"path": "/folder", "key": "SECRET_NAME", "environment": "prod"?}` (environment defaults to the provider's) |
 | OpenBao (Vault-compatible) | token or AppRole | `{"path": "apps/db", "key": "password"}`: KV v2 at `<mount>/data/<path>` (or KV v1) |
 
 Providers are added under *Administration → Secret providers*, or through environment
-variables (`INFISICAL_*`, `OPENBAO_*`). Environment-configured providers are read-only in the
+variables (`OPENBAO_*`). Environment-configured providers are read-only in the
 UI. Provider credentials are encrypted at rest. *Test* checks authentication, and *Browse* lists
 secret names (never values).
 

@@ -7561,7 +7561,6 @@
           "type": {
             "type": "string",
             "enum": [
-              "infisical",
               "openbao"
             ],
             "title": "Type"

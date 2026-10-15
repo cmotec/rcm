@@ -1,4 +1,4 @@
-"""External secret providers (Infisical, OpenBao) and credential mappings."""
+"""External secret provider (OpenBao, Vault-compatible) and credential mappings."""
 
 from __future__ import annotations
 
@@ -36,7 +36,7 @@ router = APIRouter(tags=["secret providers"])
 class ProviderIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
     name: str = Field(min_length=1, max_length=255)
-    type: Literal["infisical", "openbao"]
+    type: Literal["openbao"]
     config: dict[str, Any]
     secrets: dict[str, Any] = Field(default_factory=dict, description="write-only (client secret, token, …)")
     enabled: bool = True
@@ -128,7 +128,7 @@ async def _get_provider(db: AsyncSession, provider_id: uuid.UUID) -> m.SecretPro
 
 
 def _check_enabled(settings: Settings, ptype: str) -> None:
-    if (ptype == "infisical" and not settings.INFISICAL_ENABLED) or (ptype == "openbao" and not settings.OPENBAO_ENABLED):
+    if ptype == "openbao" and not settings.OPENBAO_ENABLED:
         raise ValidationFailed(f"the {ptype} integration is disabled on this server")
 
 

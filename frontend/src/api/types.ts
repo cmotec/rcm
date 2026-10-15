@@ -270,7 +270,7 @@ export interface KnownHost {
 export interface SecretProvider {
   id: string;
   name: string;
-  type: 'infisical' | 'openbao';
+  type: 'openbao';
   config: Record<string, unknown>;
   secret_fields_set: string[];
   enabled: boolean;

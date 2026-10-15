@@ -34,7 +34,6 @@ class SecretRef(BaseModel):
     model_config = ConfigDict(extra="forbid")
     path: str = "/"
     key: str
-    environment: str | None = None  # Infisical only
 
 
 class SecretProviderClient(ABC):

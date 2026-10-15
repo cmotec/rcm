@@ -334,7 +334,7 @@ class KnownHost(Base):
 class SecretProvider(TimestampMixin, Base):
     __tablename__ = "secret_providers"
     __table_args__ = (
-        CheckConstraint(_in("type", ("infisical", "openbao")), name="type"),
+        CheckConstraint(_in("type", ("openbao",)), name="type"),
         CheckConstraint(_in("last_sync_status", ("never", "ok", "partial", "error")), name="sync_status"),
     )
 
