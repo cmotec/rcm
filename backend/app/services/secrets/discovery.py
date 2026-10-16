@@ -13,6 +13,8 @@ provider is walked from ``import_path``:
   readable by lookups such as ``{{lookup:{hostname}_root:port}}``); keys whose name looks secret
   (token, secret, key, certificate, …) become write-only secret attributes (``secret:<key>``);
 * the matching keys become secret mappings, and the normal sync then fills in the values;
+* a secret without a username key: the secret's name becomes the credential's username (replaced by a
+  username key added later);
 * folders: the secret's path below ``import_path`` is mirrored as credential folders below the
   provider's ``import_folder_id`` (or at the top level).
 
@@ -92,6 +94,28 @@ def attribute_fields(keys: list[str], used: set[str]) -> dict[str, str]:
         if field not in out:
             out[field] = key
     return out
+
+
+USERNAME_FROM_NAME = "_username_from_secret_name"
+
+
+async def _username_from_secret_name(cred: m.Credential, secret_name: str, has_username_key: bool,
+                                     username_mapped: bool, stats: dict[str, int]) -> None:
+    """No username key in the secret: the secret's name is the username. If the secret gets a username
+    key later, that key takes over (the name-derived value is cleared, so the first sync applies it
+    instead of reporting a conflict)."""
+    meta = dict(cred.meta or {})
+    if has_username_key or username_mapped:
+        if meta.pop(USERNAME_FROM_NAME, None) and not username_mapped and cred.username == secret_name:
+            cred.username = None
+            cred.meta = meta
+        return
+    if not cred.username:
+        cred.username = secret_name[:255]
+        cred.version += 1
+        meta[USERNAME_FROM_NAME] = True
+        cred.meta = meta
+        stats["usernames_from_name"] = stats.get("usernames_from_name", 0) + 1
 
 
 def _norm(path: str) -> str:
@@ -179,6 +203,9 @@ async def discover(db: AsyncSession, client: SecretProviderClient, provider: m.S
         mapped_fields = set((await db.execute(
             select(m.SecretMapping.field).where(m.SecretMapping.credential_id == cred_id)
         )).scalars())
+        cred = await db.get(m.Credential, cred_id)
+        if cred is not None:
+            await _username_from_secret_name(cred, name, "username" in fields, "username" in mapped_fields, stats)
         for field, key in fields.items():
             if field in mapped_fields:
                 continue  # one source per field; an existing mapping (maybe another provider) stays

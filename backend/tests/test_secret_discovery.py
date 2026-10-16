@@ -51,3 +51,28 @@ def test_walk_finds_secrets_in_folders_with_their_keys() -> None:
     assert sorted(found) == [("db/pg01", [""]), ("web01", ["username", "password"])]
     # starting below the top level
     assert asyncio.run(_walk(_FakeProvider(), "/db/")) == [("db/pg01", [""])]  # type: ignore[arg-type]
+
+
+def test_secret_name_is_the_username_until_the_secret_has_one() -> None:
+    import uuid as _uuid
+
+    from app import models as m
+    from app.services.secrets.discovery import USERNAME_FROM_NAME, _username_from_secret_name
+
+    stats: dict[str, int] = {}
+    cred = m.Credential(id=_uuid.uuid4(), name="root", username=None, meta={}, version=1)
+    # no username key: the secret's name is the username
+    asyncio.run(_username_from_secret_name(cred, "root", False, False, stats))
+    assert cred.username == "root" and cred.meta[USERNAME_FROM_NAME] and stats["usernames_from_name"] == 1
+    # the secret gets a username key: the derived name steps aside, so the sync applies the key without a conflict
+    asyncio.run(_username_from_secret_name(cred, "root", True, False, stats))
+    assert cred.username is None and USERNAME_FROM_NAME not in cred.meta
+
+    # a username typed by hand is never cleared
+    edited = m.Credential(id=_uuid.uuid4(), name="web", username="admin", meta={USERNAME_FROM_NAME: True}, version=1)
+    asyncio.run(_username_from_secret_name(edited, "web", True, False, stats))
+    assert edited.username == "admin"
+    # a credential that already has a username keeps it
+    named = m.Credential(id=_uuid.uuid4(), name="db", username="postgres", meta={}, version=1)
+    asyncio.run(_username_from_secret_name(named, "db", False, False, stats))
+    assert named.username == "postgres" and USERNAME_FROM_NAME not in named.meta

@@ -45,6 +45,9 @@ provider from environment variables), every full sync walks the KV mount, or onl
 
   A secret with a single key that matches none of these, for example a key without a name, is
   taken as the password. Secrets without any usable key are skipped.
+* a secret **without a username key** gets its **name as the username** (secret `root` → username
+  `root`). If the secret gets a username key later, that key takes over at the next sync; a username
+  you typed in yourself is never replaced.
 * every **other key** becomes a credential **attribute** (`attr:<key>`): values such as `port`,
   `description` or `hostname` that connections read with lookups, e.g. `{{lookup:{hostname}_root:port}}`.
   Attributes are encrypted at rest and visible to everyone who may view the credential.
