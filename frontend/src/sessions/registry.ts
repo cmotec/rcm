@@ -119,7 +119,8 @@ async function startSession(conn: ConnectionRef, target: OpenTarget, loading: Co
           domain: credentials?.domain ?? p.domain,
         }));
         if (!entered) return null;
-        credentials = entered;
+        if ('mode' in entered) authOverride = entered; // one of the user's own accounts
+        else credentials = entered;
         continue;
       }
       if (err instanceof ApiError && (err.code === 'hostkey_unknown' || err.code === 'hostkey_changed')) {

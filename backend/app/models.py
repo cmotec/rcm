@@ -48,6 +48,8 @@ PERMISSIONS = ("view", "connect", "edit", "manage")
 RESOURCE_TYPES = ("folder", "connection", "credential", "cred_folder")
 PRINCIPAL_TYPES = ("user", "group", "role")
 SECRET_FIELDS = ("username", "password", "domain", "private_key", "passphrase")
+#: A user's own logins, kept in their profile (see PersonalAccount).
+PERSONAL_ACCOUNT_KINDS = ("user", "privileged")
 #: Secret mappings may also fill a credential attribute: field "attr:<name>" (e.g. attr:port),
 #: or a secret attribute: "secret:<name>" (write-only, like a password).
 ATTRIBUTE_FIELD_PREFIX = "attr:"
@@ -322,6 +324,27 @@ class Credential(TimestampMixin, Base):
     rotation_interval_days: Mapped[int | None] = mapped_column(Integer)
     secret_changed_at: Mapped[datetime | None]
     version: Mapped[int] = mapped_column(Integer, default=1)
+
+
+class PersonalAccount(TimestampMixin, Base):
+    """A user's own logins (profile): their normal user account and their privileged (admin) account.
+
+    Only the owner can use them, when opening a connection ("My accounts"). The password is
+    write-only and encrypted like credential passwords.
+    """
+
+    __tablename__ = "personal_accounts"
+    __table_args__ = (
+        CheckConstraint(_in("kind", PERSONAL_ACCOUNT_KINDS), name="kind"),
+        UniqueConstraint("user_id", "kind", name="uq_personal_accounts_user_kind"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    kind: Mapped[str] = mapped_column(String(16))
+    username: Mapped[str | None] = mapped_column(String(255))
+    domain: Mapped[str | None] = mapped_column(String(255))
+    password_enc: Mapped[bytes | None] = mapped_column(LargeBinary)
 
 
 class AclEntry(Base):

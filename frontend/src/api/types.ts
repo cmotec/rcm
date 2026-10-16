@@ -106,8 +106,19 @@ export interface Tree {
   connections: Connection[];
 }
 
+export type PersonalAccountKind = 'user' | 'privileged';
+
+/** One of the user's own logins (Profile → My accounts); the password is never returned. */
+export interface PersonalAccount {
+  kind: PersonalAccountKind;
+  username: string | null;
+  domain: string | null;
+  has_password: boolean;
+  updated_at: string | null;
+}
+
 export interface ValueSource {
-  kind: 'connection' | 'credential' | 'interactive' | 'folder' | 'environment' | 'default' | 'lookup';
+  kind: 'connection' | 'credential' | 'interactive' | 'account' | 'folder' | 'environment' | 'default' | 'lookup';
   id: string | null;
   name: string | null;
 }

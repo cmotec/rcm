@@ -27,10 +27,10 @@ from app.schemas.core import (
 )
 from app.security.crypto import get_box
 from app.security.ratelimit import limiter
-from app.services import audit
+from app.services import audit, personal_accounts
 from app.services.app_settings import get_runtime
 from app.services.authz import Perm
-from app.services.resolution import AuthOverride, EffectiveConnection
+from app.services.resolution import AuthOverride, EffectiveConnection, Source
 from app.services.sessions import guacd_params
 from app.services.sessions.files.base import Transfer, clean_path
 from app.services.sessions.files.opener import open_fs
@@ -104,12 +104,17 @@ async def create_session(body: SessionCreate, request: Request, principal: Princ
         raise Forbidden("'connect' permission required")
     manager.check_capacity(principal.id)
     override: AuthOverride | None = None
+    account_kind: str | None = None
     if body.auth_override is not None:
         o = body.auth_override
         if o.mode == "credential":
             if not o.credential_id:
                 raise ValidationFailed("auth_override mode 'credential' requires credential_id")
             override = AuthOverride(credential_id=o.credential_id)
+        elif o.mode == "account":
+            if not o.account:
+                raise ValidationFailed("auth_override mode 'account' requires account")
+            account_kind = o.account  # read below, in the database session
         else:
             values = o.credentials.model_dump(exclude_none=True) if o.credentials else {}
             if not values:
@@ -132,6 +137,15 @@ async def create_session(body: SessionCreate, request: Request, principal: Princ
 
     async with session_scope() as db:
         runtime = await get_runtime(db, settings)
+        if account_kind is not None:
+            acc = await personal_accounts.get_account(db, principal.id, account_kind)
+            values = personal_accounts.account_values(acc, get_box()) if acc else {}
+            if not values:
+                raise ValidationFailed(
+                    f"{personal_accounts.LABELS[account_kind].capitalize()} is not set up (Profile → My accounts)")
+            override = AuthOverride(values=values, source=Source("account", str(acc.id),  # type: ignore[union-attr]
+                                                                 personal_accounts.LABELS[account_kind]))
+
         def precheck(eff: EffectiveConnection) -> None:
             folder = eff.credential_choice_folder_id
             if folder and eff.chosen_credential_id \
@@ -198,6 +212,7 @@ async def create_session(body: SessionCreate, request: Request, principal: Princ
                  "port": launch.port, "auth_sources": {k: v["kind"] for k, v in launch.auth_sources.items()},
                  "chosen_credential_id": str(body.credential_id) if body.credential_id else None,
                  "auth_override": body.auth_override.mode if body.auth_override else None,
+                 "personal_account": account_kind,
                  "override_credential_id": str(override.credential_id) if override and override.credential_id else None,
                  "warnings": [w["code"] for w in launch.warnings]},
     )

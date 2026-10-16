@@ -25,6 +25,9 @@ from app.schemas.core import (
     AuthConfigOut,
     LocalLogin,
     MeOut,
+    PersonalAccountIn,
+    PersonalAccountKind,
+    PersonalAccountOut,
     PreferencesIn,
 )
 from app.security.crypto import Signer, aad_for, get_box
@@ -32,6 +35,7 @@ from app.security.passwords import hash_password, needs_rehash, verify_password
 from app.security.ratelimit import limiter
 from app.services import audit
 from app.services import auth as auth_svc
+from app.services import personal_accounts
 from app.services.authz import Perm, build_access_context
 from app.services.oidc import STATE_COOKIE, LoginState, get_oidc_client, safe_return_to
 from app.services.sessions.manager import get_manager
@@ -258,6 +262,58 @@ async def put_preferences(
     else:
         pref.data = body.data
     return {"data": body.data}
+
+
+def _account_out(kind: str, acc: m.PersonalAccount | None) -> PersonalAccountOut:
+    if acc is None:
+        return PersonalAccountOut(kind=kind)  # type: ignore[arg-type]
+    return PersonalAccountOut(kind=kind, username=acc.username, domain=acc.domain,  # type: ignore[arg-type]
+                              has_password=acc.password_enc is not None, updated_at=acc.updated_at)
+
+
+@me_router.get("/accounts", response_model=list[PersonalAccountOut],
+               summary="My personal accounts (user and privileged account; passwords are never returned)")
+async def list_personal_accounts(principal: Principal = Depends(get_principal),
+                                 db: AsyncSession = Depends(get_db, scope="function")) -> list[PersonalAccountOut]:
+    accounts = await personal_accounts.list_accounts(db, principal.id)
+    return [_account_out(kind, accounts.get(kind)) for kind in m.PERSONAL_ACCOUNT_KINDS]
+
+
+@me_router.put("/accounts/{kind}", response_model=PersonalAccountOut, summary="Set one of my personal accounts")
+async def put_personal_account(kind: PersonalAccountKind, body: PersonalAccountIn,
+                               principal: Principal = Depends(get_principal),
+                               db: AsyncSession = Depends(get_db, scope="function")) -> PersonalAccountOut:
+    acc = await personal_accounts.get_account(db, principal.id, kind)
+    if acc is None:
+        acc = m.PersonalAccount(id=uuid.uuid4(), user_id=principal.id, kind=kind)
+        db.add(acc)
+    acc.username = body.username or None
+    acc.domain = body.domain or None
+    password_changed = bool(body.password) or (body.clear_password and acc.password_enc is not None)
+    if body.password:
+        personal_accounts.set_password(acc, body.password)
+    elif body.clear_password:
+        personal_accounts.set_password(acc, None)
+    if personal_accounts.is_empty(acc):
+        await db.delete(acc)
+        await db.flush()
+        acc = None
+    else:
+        await db.flush()
+        await db.refresh(acc)
+    await audit.record(db, "personal_account.update", actor_id=principal.id, actor_name=principal.name,
+                       resource_type="personal_account", details={"kind": kind, "password_changed": password_changed})
+    return _account_out(kind, acc)
+
+
+@me_router.delete("/accounts/{kind}", status_code=204, summary="Remove one of my personal accounts")
+async def delete_personal_account(kind: PersonalAccountKind, principal: Principal = Depends(get_principal),
+                                  db: AsyncSession = Depends(get_db, scope="function")) -> None:
+    acc = await personal_accounts.get_account(db, principal.id, kind)
+    if acc is not None:
+        await db.delete(acc)
+        await audit.record(db, "personal_account.delete", actor_id=principal.id, actor_name=principal.name,
+                           resource_type="personal_account", details={"kind": kind})
 
 
 @me_router.get("/tokens", response_model=list[ApiTokenOut], summary="List my API tokens")

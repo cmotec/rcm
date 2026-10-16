@@ -551,3 +551,17 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; user-sel
 }
 
 .attr-row .secret-stored { flex: 1; min-width: 0; }
+
+/* Profile: personal accounts; login dialogs: "My accounts" */
+.profile-heading { font-size: 14px; margin: 18px 0 4px; padding-top: 12px; border-top: 1px solid var(--border); }
+.account-fields { border: 1px solid var(--border); border-radius: var(--radius); padding: 6px 12px 2px; margin: 10px 0 0; min-width: 0; }
+.account-fields legend { font-weight: 600; padding: 0 4px; }
+.account-fields > small { display: block; margin-bottom: 6px; }
+.input-row { display: flex; gap: 6px; min-width: 0; }
+.input-row input { flex: 1; min-width: 0; }
+.account-shortcuts { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 10px; padding-top: 10px;
+  border-top: 1px solid var(--border); }
+.radio-cards.three { grid-template-columns: repeat(3, 1fr); }
+@media (max-width: 560px) {
+  .radio-cards.three { grid-template-columns: 1fr; }
+}

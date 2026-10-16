@@ -203,6 +203,33 @@ def test_interactive_credentials(admin: UserClient, ssh_server) -> None:  # noqa
     assert got["password_set"] is False
 
 
+def test_personal_account(admin: UserClient, ssh_server) -> None:  # noqa: ANN001
+    conn = _create(admin, {"name": "Mine", "protocol": "ssh", "hostname": "127.0.0.1", "port": ssh_server.port,
+                           "auth_mode": "interactive"})
+    body = {"connection_id": conn["id"], "auth_override": {"mode": "account", "account": "privileged"}}
+    r = admin.post("/api/v1/sessions", json=body)
+    assert r.status_code == 422 and "not set up" in r.text
+
+    r = admin.put("/api/v1/me/accounts/privileged", json={"username": SSH_USER, "password": SSH_PASSWORD})
+    assert r.status_code == 200 and r.json()["has_password"] is True and "password" not in r.json()
+    accounts = {a["kind"]: a for a in admin.get("/api/v1/me/accounts").json()}
+    assert accounts["privileged"]["username"] == SSH_USER and accounts["user"]["username"] is None
+    # the password stays when only the username is changed
+    r = admin.put("/api/v1/me/accounts/privileged", json={"username": SSH_USER})
+    assert r.json()["has_password"] is True
+
+    r = admin.post("/api/v1/sessions", json=body)
+    assert r.status_code == 201, r.text
+    s = r.json()
+    assert s["auth_sources"]["password"]["kind"] == "account"
+    with admin.websocket(f"{s['tunnel_path']}?ticket={s['ticket']}") as ws:
+        ws.receive_text()
+        assert json.loads(ws.receive_text())["state"] == "connected"
+
+    assert admin.delete("/api/v1/me/accounts/privileged").status_code == 204
+    assert all(a["username"] is None for a in admin.get("/api/v1/me/accounts").json())
+
+
 # --------------------------------------------------------------------------- SFTP
 
 

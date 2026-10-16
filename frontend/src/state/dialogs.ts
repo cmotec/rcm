@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { HostKeyInfo, Protocol } from '../api/types';
+import type { HostKeyInfo, PersonalAccountKind, Protocol } from '../api/types';
 
 export interface MenuItem {
   label: string;
@@ -22,16 +22,21 @@ export type DialogRequest =
   | { id: number; kind: 'prompt'; title: string; label: string; initial?: string; secret?: boolean;
       resolve: (value: string | null) => void }
   | { id: number; kind: 'credentials'; connectionName: string; protocol: Protocol; fields: string[];
-      username?: string | null; domain?: string | null; resolve: (v: InteractiveCredentials | null) => void }
+      username?: string | null; domain?: string | null;
+      resolve: (v: InteractiveCredentials | AccountOverride | null) => void }
   | { id: number; kind: 'hostkey'; info: HostKeyInfo; changed: boolean; resolve: (accept: boolean) => void }
   | { id: number; kind: 'choose-credential'; connectionName: string; protocol: Protocol; folderId?: string | null;
       resolve: (o: AuthOverride | null) => void }
   | { id: number; kind: 'open-with'; connectionName: string; protocol: Protocol; resolve: (o: AuthOverride | null) => void };
 
+/** One of the user's own accounts (Profile → My accounts). */
+export type AccountOverride = { mode: 'account'; account: PersonalAccountKind };
+
 /** "Open with different credentials" (one session only). */
 export type AuthOverride =
   | { mode: 'own'; credentials: InteractiveCredentials }
-  | { mode: 'credential'; credential_id: string };
+  | { mode: 'credential'; credential_id: string }
+  | AccountOverride;
 
 export interface Toast {
   id: number;
@@ -72,9 +77,9 @@ export const dialogs = {
   prompt: (o: { title: string; label: string; initial?: string; secret?: boolean }) =>
     enqueue<string | null>({ kind: 'prompt', ...o }),
   credentials: (o: { connectionName: string; protocol: Protocol; fields: string[]; username?: string | null;
-    domain?: string | null }) => enqueue<InteractiveCredentials | null>({ kind: 'credentials', ...o }),
+    domain?: string | null }) => enqueue<InteractiveCredentials | AccountOverride | null>({ kind: 'credentials', ...o }),
   hostKey: (info: HostKeyInfo, changed: boolean) => enqueue<boolean>({ kind: 'hostkey', info, changed }),
-  /** "Choose at connect time": an entry from the credential store, or credentials typed for this session. */
+  /** "Choose at connect time": an entry from the credential store, one of the user's accounts, or typed credentials. */
   chooseCredential: (connectionName: string, protocol: Protocol, folderId?: string | null) =>
     enqueue<AuthOverride | null>({ kind: 'choose-credential', connectionName, protocol, folderId }),
   openWith: (connectionName: string, protocol: Protocol) =>

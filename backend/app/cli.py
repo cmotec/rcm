@@ -117,7 +117,9 @@ def cmd_rotate_keys(_: argparse.Namespace) -> int:
     targets = [
         (m.Connection, "connections", [("password_enc", "password")]),
         (m.Credential, "credentials", [("password_enc", "password"), ("private_key_enc", "private_key"),
-                                       ("passphrase_enc", "passphrase")]),
+                                       ("passphrase_enc", "passphrase"), ("attributes_enc", "attributes"),
+                                       ("secret_attributes_enc", "secret_attributes")]),
+        (m.PersonalAccount, "personal_accounts", [("password_enc", "password")]),
         (m.SecretProvider, "secret_providers", [("secret_config_enc", "secret_config")]),
         (m.SecretMapping, "secret_mappings", [("pending_remote_enc", "pending")]),
         (m.WebSession, "web_sessions", [("oidc_id_token_enc", "id_token"), ("oidc_refresh_token_enc", "refresh_token")]),

@@ -56,10 +56,13 @@ def default_port(protocol: str, settings: dict[str, Any] | None = None) -> int |
 @dataclass(frozen=True)
 class AuthOverride:
     """"Open with different credentials": replaces the connection's configured authentication for
-    one session. Either typed values (``values``, never stored) or a credential-store entry."""
+    one session. Either values (typed, never stored, or from one of the user's personal accounts)
+    or a credential-store entry."""
 
     values: dict[str, str] | None = None
     credential_id: uuid.UUID | None = None
+    #: where ``values`` come from (shown as the auth source), default: typed at launch
+    source: Source | None = None
 
 
 @dataclass(frozen=True)
@@ -589,7 +592,7 @@ def compute_effective(
             auth = credential_values(credentials.get(auth_override.credential_id, []), box,
                                      include_secrets=include_secrets)
         else:
-            src = Source("interactive", str(conn.id), "entered at launch")
+            src = auth_override.source or Source("interactive", str(conn.id), "entered at launch")
             auth = {k: Resolved(v, src) for k, v in (auth_override.values or {}).items() if k in AUTH_FIELDS and v}
         interactive_conn = None
         choice_conn = None
