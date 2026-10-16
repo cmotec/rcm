@@ -1,6 +1,7 @@
 import {
   ClipboardIcon,
   Columns2,
+  ExternalLink,
   GripVertical,
   Keyboard,
   LoaderCircle,
@@ -21,7 +22,7 @@ import { ProtocolIcon } from '../components/common/icons';
 import { Modal } from '../components/common/Modal';
 import { GuacSession } from '../sessions/GuacSession';
 import { TerminalSession } from '../sessions/TerminalSession';
-import { closeSessionById, getController } from '../sessions/registry';
+import { closeSessionById, getController, openInNewWindow } from '../sessions/registry';
 import { useWorkspace } from '../state/workspace';
 import { formatBytes } from '../util/download';
 import { useMediaQuery } from '../util/useMediaQuery';
@@ -128,9 +129,11 @@ interface FrameProps {
   floatControls?: ReactNode;
   onTitlePointerDown?: (e: React.PointerEvent) => void;
   onTitleDoubleClick?: () => void;
+  /** Alone in its own browser window: no layout controls (split, tab, floating, new window). */
+  standalone?: boolean;
 }
 
-export function SessionFrame({ sessionId, mode, floatControls, onTitlePointerDown, onTitleDoubleClick }: FrameProps) {
+export function SessionFrame({ sessionId, mode, floatControls, onTitlePointerDown, onTitleDoubleClick, standalone }: FrameProps) {
   const meta = useWorkspace((s) => s.sessions[sessionId]);
   const focused = useWorkspace((s) => s.layout.focusedSessionId === sessionId);
   // "type in all panes" is on for the tab this pane belongs to
@@ -169,13 +172,15 @@ export function SessionFrame({ sessionId, mode, floatControls, onTitlePointerDow
         </button>
       )}
       <div className="frame-head" onPointerDown={onTitlePointerDown} onDoubleClick={onTitleDoubleClick}>
-        <span className="drag-grip" draggable title="Drag onto the workspace to split, onto the tab bar to dock"
-              onDragStart={(e) => {
-                e.dataTransfer.setData(SESSION_MIME, sessionId);
-                e.dataTransfer.effectAllowed = 'move';
-              }} onPointerDown={(e) => e.stopPropagation()}>
-          <GripVertical size={14} />
-        </span>
+        {!standalone && (
+          <span className="drag-grip" draggable title="Drag onto the workspace to split, onto the tab bar to dock"
+                onDragStart={(e) => {
+                  e.dataTransfer.setData(SESSION_MIME, sessionId);
+                  e.dataTransfer.effectAllowed = 'move';
+                }} onPointerDown={(e) => e.stopPropagation()}>
+            <GripVertical size={14} />
+          </span>
+        )}
         <ProtocolIcon protocol={meta.protocol} size={14} />
         <span className="frame-title" title={`${meta.name} — ${meta.host ?? ''}`}>{meta.name}</span>
         <span className={`status-dot ${state.status}`} title={state.message ?? state.status} />
@@ -203,14 +208,20 @@ export function SessionFrame({ sessionId, mode, floatControls, onTitlePointerDow
               <Maximize size={14} />
             </button>
           )}
-          {mode === 'split' && (
+          {!standalone && mode === 'split' && (
             <button className="icon-btn" title="Move to own tab" onClick={() => update((l) => dockToTab(l, sessionId))}>
               <PanelTop size={14} />
             </button>
           )}
-          {mode !== 'float' && (
+          {!standalone && mode !== 'float' && (
             <button className="icon-btn" title="Pop out into a floating window" onClick={popOut}>
               <SquareArrowOutUpRight size={14} />
+            </button>
+          )}
+          {!standalone && ctrl.info.kind !== 'files' && (
+            <button className="icon-btn" title="Open in a new browser window (e.g. on another monitor)"
+                    onClick={() => openInNewWindow(sessionId)}>
+              <ExternalLink size={14} />
             </button>
           )}
           {floatControls}

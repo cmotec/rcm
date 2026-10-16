@@ -11,7 +11,6 @@ import pytest
 from app.config import get_settings
 from app.services.secrets import sync as sync_mod
 from app.services.secrets.base import BrowseItem, SecretProviderClient, SecretRef
-from app.services.secrets.infisical import InfisicalClient
 from app.services.secrets.openbao import OpenBaoClient, OpenBaoConfig, OpenBaoSecrets
 from tests.conftest import UserClient
 
@@ -147,34 +146,6 @@ def test_secret_management_requires_permission(make_user) -> None:  # noqa: ANN0
 
 def _run(coro: Any) -> Any:
     return asyncio.run(coro)
-
-
-def test_infisical_client_requests() -> None:
-    seen: list[httpx.Request] = []
-
-    def handler(req: httpx.Request) -> httpx.Response:
-        seen.append(req)
-        if req.url.path == "/api/v1/auth/universal-auth/login":
-            body = req.read().decode()
-            assert '"clientId":"cid"' in body.replace(" ", "")
-            return httpx.Response(200, json={"accessToken": "tok", "expiresIn": 600})
-        assert req.headers["authorization"] == "Bearer tok"
-        if req.url.path == "/api/v3/secrets/raw/DB_PASSWORD":
-            assert req.url.params["workspaceId"] == "proj" and req.url.params["environment"] == "prod"
-            assert req.url.params["secretPath"] == "/apps"
-            return httpx.Response(200, json={"secret": {"secretKey": "DB_PASSWORD", "secretValue": "s3"}})
-        return httpx.Response(404, json={})
-
-    async def go() -> None:
-        c = InfisicalClient({"url": "https://inf.example", "project_id": "proj", "environment": "prod"},
-                            {"client_id": "cid", "client_secret": "csec"}, get_settings())
-        c.http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-        assert await c.get(SecretRef(path="/apps", key="DB_PASSWORD")) == "s3"
-        assert await c.get(SecretRef(path="/apps", key="MISSING")) is None
-        await c.close()
-
-    _run(go())
-    assert sum(1 for r in seen if r.url.path.endswith("/login")) == 1  # token cached
 
 
 def test_openbao_client_kv2_and_approle() -> None:

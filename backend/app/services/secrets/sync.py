@@ -34,13 +34,19 @@ from app.logging import get_logger
 from app.security.crypto import aad_for, fingerprint, get_box
 from app.services import audit
 from app.services.auth import now
+from app.services.credential_attributes import (
+    get_attributes,
+    get_secret_attributes,
+    set_attributes,
+    set_secret_attributes,
+)
 from app.services.secrets.base import ProviderError, SecretProviderClient, SecretRef
-from app.services.secrets.infisical import InfisicalClient
+from app.services.secrets.discovery import discover
 from app.services.secrets.openbao import OpenBaoClient
 
 log = get_logger(__name__)
 
-PROVIDERS: dict[str, type[SecretProviderClient]] = {"infisical": InfisicalClient, "openbao": OpenBaoClient}
+PROVIDERS: dict[str, type[SecretProviderClient]] = {"openbao": OpenBaoClient}
 ADVISORY_LOCK_BASE = 0x5EC0_0000
 
 
@@ -69,7 +75,21 @@ def build_client(p: m.SecretProvider, settings: Settings) -> SecretProviderClien
         raise ValidationFailed(f"invalid provider configuration: {exc}") from exc
 
 
+def _attr_target(field: str) -> tuple[str, str] | None:
+    """("attributes" | "secret_attributes", name) for attribute mappings."""
+    if field.startswith(m.ATTRIBUTE_FIELD_PREFIX):
+        return "attributes", field[len(m.ATTRIBUTE_FIELD_PREFIX):]
+    if field.startswith(m.SECRET_ATTRIBUTE_FIELD_PREFIX):
+        return "secret_attributes", field[len(m.SECRET_ATTRIBUTE_FIELD_PREFIX):]
+    return None
+
+
 def _read_field(cred: m.Credential, field: str) -> str | None:
+    target = _attr_target(field)
+    if target:
+        values = get_attributes(cred) if target[0] == "attributes" else get_secret_attributes(cred)
+        v = values.get(target[1])
+        return None if v in (None, "") else str(v)
     if field in ("username", "domain"):
         return getattr(cred, field)
     blob = getattr(cred, f"{field}_enc")
@@ -77,6 +97,21 @@ def _read_field(cred: m.Credential, field: str) -> str | None:
 
 
 def _write_field(cred: m.Credential, field: str, value: str | None) -> None:
+    target = _attr_target(field)
+    if target:
+        column, name = target
+        values = get_attributes(cred) if column == "attributes" else get_secret_attributes(cred)
+        if value in (None, ""):
+            values.pop(name, None)
+        else:
+            values[name] = value
+        if column == "attributes":
+            set_attributes(cred, values)
+        else:
+            set_secret_attributes(cred, values)
+            cred.secret_changed_at = now()
+        cred.version += 1
+        return
     if field in ("username", "domain"):
         setattr(cred, field, value)
     else:
@@ -180,10 +215,17 @@ async def sync_provider(db: AsyncSession, provider: m.SecretProvider, settings: 
     stmt = select(m.SecretMapping).where(m.SecretMapping.provider_id == provider.id)
     if credential_id:
         stmt = stmt.where(m.SecretMapping.credential_id == credential_id)
-    mappings = (await db.execute(stmt)).scalars().all()
-    stats["mappings"] = len(mappings)
     try:
         async with build_client(provider, settings) as client:
+            # automatic import: every secret becomes a credential (full syncs only)
+            if credential_id is None and (provider.config or {}).get("auto_import"):
+                found = await discover(db, client, provider, actor_id=actor_id)
+                stats.update(found)
+                if found["created"] or found["linked"] or found["keys_added"]:
+                    await audit.record(db, "secret_provider.auto_import", actor_id=actor_id, actor_name=actor_name,
+                                       resource_type="secret_provider", resource_id=provider.id, details=found)
+            mappings = (await db.execute(stmt)).scalars().all()
+            stats["mappings"] = len(mappings)
             for mp in mappings:
                 before = mp.status
                 counters = {k: stats[k] for k in ("updated", "conflicts", "cleared", "errors")}
@@ -236,15 +278,12 @@ async def resolve_conflict(db: AsyncSession, mp: m.SecretMapping, action: str) -
 async def ensure_env_providers(db: AsyncSession, settings: Settings) -> None:
     """Create/update providers configured through environment variables (read-only in the UI)."""
     specs: list[tuple[str, str, dict[str, Any], dict[str, Any]]] = []
-    if settings.INFISICAL_ENABLED and settings.INFISICAL_URL and settings.INFISICAL_CLIENT_ID:
-        specs.append(("Infisical (environment)", "infisical",
-                      {"url": settings.INFISICAL_URL, "project_id": settings.INFISICAL_PROJECT_ID or "",
-                       "environment": settings.INFISICAL_ENVIRONMENT or "prod"},
-                      {"client_id": settings.INFISICAL_CLIENT_ID, "client_secret": settings.INFISICAL_CLIENT_SECRET}))
     if settings.OPENBAO_ENABLED and settings.OPENBAO_URL:
         specs.append(("OpenBao (environment)", "openbao",
                       {"url": settings.OPENBAO_URL, "namespace": settings.OPENBAO_NAMESPACE,
-                       "mount": settings.OPENBAO_KV_MOUNT, "auth_method": settings.OPENBAO_AUTH_METHOD},
+                       "mount": settings.OPENBAO_KV_MOUNT, "auth_method": settings.OPENBAO_AUTH_METHOD,
+                       "auto_import": settings.OPENBAO_AUTO_IMPORT or None,
+                       "import_path": settings.OPENBAO_IMPORT_PATH or None},
                       {"token": settings.OPENBAO_TOKEN, "role_id": settings.OPENBAO_ROLE_ID,
                        "secret_id": settings.OPENBAO_SECRET_ID}))
     for name, ptype, config, secrets in specs:

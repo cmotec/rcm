@@ -33,7 +33,7 @@ floating windows or split views in one browser workspace.
    │    SSH terminal  (asyncssh)    ───────────────────────►  SSH hosts
    │    SFTP          (asyncssh)    ───────────────────────►  SFTP hosts
    │    FTP/FTPS      (ftplib, threads) ───────────────────►  FTP hosts
-   │  secret sync (Infisical, OpenBao) ────────────────────►  secret stores
+   │  secret sync (OpenBao / Vault) ────────────────────────►  secret stores
    │  RDM import, audit log, background jobs                  │
    └──────────┬─────────────────────────────┬─────────────────┘
               │ asyncpg (TLS optional)      │ (private network "gateway")
@@ -166,7 +166,7 @@ backend/app
 │   ├── oidc.py
 │   ├── sessions/        manager, guacd protocol client, parameter builders,
 │   │                    SSH terminal, SFTP and FTP file systems
-│   ├── secrets/         provider interface, Infisical, OpenBao, sync engine
+│   ├── secrets/         provider interface, OpenBao, automatic import, sync engine
 │   └── importers/       Devolutions RDM (.rdm XML, CSV)
 ├── jobs.py              background scheduler (session reaper, secret sync)
 └── cli.py               migrations, recovery admin, key rotation
@@ -253,6 +253,43 @@ If `inherit_auth` is false the connection is fully independent. Credential
 entries have the same parent rule (`parent_id`): an empty field falls back to
 the parent credential. Cycles are rejected on write. During resolution the
 depth is capped at 32.
+
+### Lookups (values from the credential store)
+
+Any of `username`, `password`, `domain`, `private_key`, `passphrase`, `hostname`, `port`,
+`search_domain` and `description` can hold a lookup instead of a value:
+
+```
+{{lookup:<credential name pattern>:<field>}}      e.g. {{lookup:{hostname}_root:username}}
+```
+
+* Placeholders: `{hostname}` (host name of the **opened** connection, so a lookup on a parent applies to
+  each child with its own host), `{name}` (its name), `{domain}` (its search domain). A hostname
+  lookup cannot use `{hostname}`, a domain lookup cannot use `{domain}`.
+* `*` matches any text; names are compared case-insensitively and must match completely.
+* Only credentials the user may use count (`connect` when opening, `view` for the details shown).
+  Exactly one must match; no match or several matches is an error, nothing is guessed.
+* `<field>`: a login field of the credential, one of its **attributes** (key/value pairs shown to
+  everyone who may view the credential, e.g. `port`, `description`), or one of its **secret
+  attributes** (write-only like the password, e.g. an API token). The OpenBao import fills both from
+  the secret's other keys. Secrets (password, key, passphrase, secret attributes) are decrypted only
+  for the session; the tree and the details panel never show them.
+* Attributes and secret attributes are stored encrypted (AES-256-GCM, bound to credential and column,
+  `attributes_enc`, `secret_attributes_enc`).
+* A lookup replaces the connection's own value for that field and takes part in inheritance like
+  it. Login lookups belong to "connection-specific" authentication.
+* A failing lookup is shown in the details panel and the connection dialog; opening the connection
+  fails with the message (`lookup_failed`). The tree shows resolved display values.
+
+Stored in `connections.lookups` (field → expression); the plain column of that field stays empty.
+
+### Credential folders
+
+The credential store has its own folder tree (`credential_folders`), separate from connection
+folders. Grants on a folder (ACL resource type `cred_folder`) apply to the folders and credentials
+below it, like connection folders; the credential-store root grant (`credential`, all-zero UUID)
+covers everything. "Choose a credential at connect time" can be limited to one folder (and its
+sub-folders): `connections.credential_folder_id`.
 
 ### Where interactive credentials live
 The values from the interactive prompt are kept on the in-memory session

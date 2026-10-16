@@ -50,7 +50,7 @@ export const useTreePrefs = create<TreePrefsState>((set, get) => ({
 
 /** First line of the description, trimmed (the tree shows one line). */
 function shortDescription(c: Connection): string {
-  return (c.description ?? '').split(/\r?\n/)[0].trim();
+  return (c.resolved?.description ?? c.description ?? '').split(/\r?\n/)[0].trim();
 }
 
 /**
@@ -59,7 +59,7 @@ function shortDescription(c: Connection): string {
  * containers, children that inherit it) use their name instead. The domain is never shown.
  */
 export function connectionLabel(c: Connection, prefs: TreePrefs): { primary: string; secondary: string | null } {
-  const host = c.hostname?.trim() || null;
+  const host = (c.resolved?.hostname ?? c.hostname)?.trim() || null;
   const desc = shortDescription(c) || null;
   if (!host) return { primary: c.name, secondary: desc && desc !== c.name ? desc : null };
   if (prefs.hideHostname) return { primary: desc ?? c.name, secondary: null };

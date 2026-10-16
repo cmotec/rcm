@@ -45,9 +45,13 @@ NAMING = {
 PROTOCOLS = ("host", "ssh", "sftp", "rdp", "vnc", "ftp", "ftps")
 AUTH_MODES = ("inherit", "direct", "credential", "interactive")
 PERMISSIONS = ("view", "connect", "edit", "manage")
-RESOURCE_TYPES = ("folder", "connection", "credential")
+RESOURCE_TYPES = ("folder", "connection", "credential", "cred_folder")
 PRINCIPAL_TYPES = ("user", "group", "role")
 SECRET_FIELDS = ("username", "password", "domain", "private_key", "passphrase")
+#: Secret mappings may also fill a credential attribute: field "attr:<name>" (e.g. attr:port),
+#: or a secret attribute: "secret:<name>" (write-only, like a password).
+ATTRIBUTE_FIELD_PREFIX = "attr:"
+SECRET_ATTRIBUTE_FIELD_PREFIX = "secret:"
 
 
 def _in(column: str, values: tuple[str, ...]) -> str:
@@ -247,6 +251,12 @@ class Connection(TimestampMixin, Base):
     search_domain: Mapped[str | None] = mapped_column(String(253))
     description: Mapped[str | None] = mapped_column(Text)
     tags: Mapped[list[str]] = mapped_column(ARRAY(Text), default=list, server_default="{}")
+    # field -> "{{lookup:<credential name pattern>:<field>}}", resolved from the credential store at use time
+    lookups: Mapped[dict[str, str]] = mapped_column(JSONB, default=dict, server_default="{}")
+    # auth_mode "credential" without a pinned credential: offer only credentials from this folder (and below)
+    credential_folder_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("credential_folders.id", ondelete="SET NULL")
+    )
     settings: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, server_default="{}")
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
     owner_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
@@ -267,11 +277,29 @@ class Favorite(Base):
 # --------------------------------------------------------------------------- credentials
 
 
+class CredentialFolder(TimestampMixin, Base):
+    """Folder tree of the credential store (separate from connection folders); grants inherit down."""
+
+    __tablename__ = "credential_folders"
+    __table_args__ = (
+        CheckConstraint("parent_id IS NULL OR parent_id <> id", name="not_own_parent"),
+        Index("ix_credential_folders_parent", "parent_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(255))
+    parent_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("credential_folders.id", ondelete="RESTRICT"))
+    description: Mapped[str | None] = mapped_column(Text)
+    owner_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    version: Mapped[int] = mapped_column(Integer, default=1)
+
+
 class Credential(TimestampMixin, Base):
     __tablename__ = "credentials"
     __table_args__ = (
         CheckConstraint("parent_id IS NULL OR parent_id <> id", name="not_own_parent"),
         Index("ix_credentials_parent", "parent_id"),
+        Index("ix_credentials_folder", "folder_id"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
@@ -284,6 +312,12 @@ class Credential(TimestampMixin, Base):
     passphrase_enc: Mapped[bytes | None] = mapped_column(LargeBinary)
     description: Mapped[str | None] = mapped_column(Text)
     meta: Mapped[dict[str, Any]] = mapped_column("metadata", JSONB, default=dict, server_default="{}")
+    folder_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("credential_folders.id", ondelete="RESTRICT"))
+    # Values connections can take over through lookups, both encrypted at rest (JSON objects, see
+    # services/credential_attributes.py): attributes are shown to viewers (port, hostname, description,
+    # …); secret attributes are write-only like the password and only reach sessions.
+    attributes_enc: Mapped[bytes | None] = mapped_column(LargeBinary)
+    secret_attributes_enc: Mapped[bytes | None] = mapped_column(LargeBinary)
     owner_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     rotation_interval_days: Mapped[int | None] = mapped_column(Integer)
     secret_changed_at: Mapped[datetime | None]
@@ -334,7 +368,7 @@ class KnownHost(Base):
 class SecretProvider(TimestampMixin, Base):
     __tablename__ = "secret_providers"
     __table_args__ = (
-        CheckConstraint(_in("type", ("infisical", "openbao")), name="type"),
+        CheckConstraint(_in("type", ("openbao",)), name="type"),
         CheckConstraint(_in("last_sync_status", ("never", "ok", "partial", "error")), name="sync_status"),
     )
 
@@ -356,7 +390,8 @@ class SecretMapping(TimestampMixin, Base):
 
     __tablename__ = "secret_mappings"
     __table_args__ = (
-        CheckConstraint(_in("field", SECRET_FIELDS), name="field"),
+        CheckConstraint(f"{_in('field', SECRET_FIELDS)} OR field LIKE 'attr:%' OR field LIKE 'secret:%'",
+                        name="field"),
         CheckConstraint(
             _in("conflict_policy", ("manual", "prefer_remote", "prefer_local")), name="conflict_policy"
         ),
@@ -373,7 +408,7 @@ class SecretMapping(TimestampMixin, Base):
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     credential_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("credentials.id", ondelete="CASCADE"))
     provider_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("secret_providers.id", ondelete="CASCADE"))
-    field: Mapped[str] = mapped_column(String(16))
+    field: Mapped[str] = mapped_column(String(64))
     external_ref: Mapped[dict[str, Any]] = mapped_column(JSONB)
     conflict_policy: Mapped[str] = mapped_column(String(16), default="manual")
     delete_policy: Mapped[str] = mapped_column(String(16), default="keep")

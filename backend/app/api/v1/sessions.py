@@ -51,7 +51,9 @@ class CredentialsRequired(AppError):
 def _ask_before_connecting(eff: EffectiveConnection) -> None:
     """Questions for the user, raised before DNS lookups and jump-host preparation."""
     if eff.credential_choice_required:
-        raise CredentialChoiceRequired("choose the credential to connect with")
+        folder = eff.credential_choice_folder_id
+        raise CredentialChoiceRequired("choose the credential to connect with",
+                                       extra={"folder_id": str(folder) if folder else None})
     if eff.prompt_required:
         protocol = eff.connection.protocol
         raise CredentialsRequired(
@@ -130,10 +132,18 @@ async def create_session(body: SessionCreate, request: Request, principal: Princ
 
     async with session_scope() as db:
         runtime = await get_runtime(db, settings)
+        def precheck(eff: EffectiveConnection) -> None:
+            folder = eff.credential_choice_folder_id
+            if folder and eff.chosen_credential_id \
+                    and access.credential_folder_of(eff.chosen_credential_id) not in access.cred_folder_subtree(folder):
+                raise ValidationFailed("this connection only accepts credentials from its credential folder")
+            _ask_before_connecting(eff)
+
         launch, eff = await build_launch(db, body.connection_id, settings=settings, runtime=runtime,
                                          box=get_box(), interactive=interactive,
                                          chosen_credential_id=body.credential_id, auth_override=override,
-                                         precheck=_ask_before_connecting)
+                                         precheck=precheck,
+                                         credential_filter=lambda cid: access.can("credential", cid, "connect"))
         if eff.credential_choice_required:
             raise CredentialChoiceRequired("choose the credential to connect with")
         if launch.protocol == "rdp" and not launch.settings.server_layout:

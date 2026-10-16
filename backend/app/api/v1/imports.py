@@ -27,7 +27,7 @@ router = APIRouter(prefix="/imports", tags=["import"])
 MANUAL_MIGRATION_HELP = (
     "Remote Desktop Manager encrypts stored passwords with keys that are not part of the export. "
     "They are never decrypted by this importer. To migrate them: (1) create credential entries in the "
-    "credential store (or map them to Infisical/OpenBao secrets), (2) open each listed connection and set its "
+    "credential store (or map them to OpenBao secrets), (2) open each listed connection and set its "
     "authentication to 'Credential store' with that entry, or (3) use 'Interactive' authentication so users "
     "enter the password when connecting."
 )

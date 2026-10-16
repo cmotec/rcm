@@ -31,8 +31,13 @@ export function trackVisualViewport(): () => void {
       root.style.removeProperty('--kb-shift');
       root.style.setProperty('--app-height', `${Math.round(vv.height)}px`);
     }
-    // iOS scrolls the page to show the focused field; the app positions itself, so undo the scroll
+    // iOS scrolls the page to show the focused field; the app positions itself, so undo the scroll…
     if (window.scrollY || window.scrollX) window.scrollTo(0, 0);
+    // …and brings the field into view inside its own scroll area (a dialog, a form) instead
+    const active = document.activeElement as HTMLElement | null;
+    if (keyboard > 80 && !remoteDesktop && active?.matches('input, textarea, select, [contenteditable="true"]')) {
+      active.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    }
   };
   const schedule = () => {
     if (!frame) frame = window.requestAnimationFrame(apply);

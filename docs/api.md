@@ -57,9 +57,11 @@ The complete, generated specification is in [openapi.json](openapi.json)
 | GET/PATCH/DELETE | `/credentials/{id}` | metadata / update (write-only secrets; `null` clears) / delete |
 | POST | `/credentials/{id}/reveal` | reveal selected secret fields (needs `credentials.reveal` + manage; audited) |
 | GET | `/credentials/{id}/usage` | referencing connections and child credentials |
-| GET/PUT | `/credentials/{id}/mappings` | external secret mappings per field |
+| GET/PUT | `/credentials/{id}/mappings` | external secret mappings per field (`attr:<name>` fills an attribute, `secret:<name>` a secret attribute) |
+| GET/POST | `/credential-folders` | credential folders visible to the caller / create |
+| PATCH/DELETE | `/credential-folders/{id}` | rename, move / delete (`move_contents=true` moves credentials and sub-folders up; nothing is deleted with the folder) |
 | POST | `/secret-mappings/{id}/resolve` | resolve a sync conflict (`accept_remote` / `keep_local`) |
-| GET/POST | `/secret-providers` | providers (Infisical, OpenBao) |
+| GET/POST | `/secret-providers` | providers (OpenBao) |
 | PATCH/DELETE | `/secret-providers/{id}` | update / remove |
 | POST | `/secret-providers/{id}/test` | connectivity & auth check |
 | GET | `/secret-providers/{id}/browse?path=` | list secret names (never values) |
@@ -93,7 +95,7 @@ The complete, generated specification is in [openapi.json](openapi.json)
 | GET | `/permissions` | all global permission names |
 | GET | `/groups` | IdP groups seen at login |
 | GET/POST/DELETE | `/group-mappings[/{id}]`, GET `/group-mappings/env` | IdP group → role mappings |
-| GET/PUT | `/acl/{folder|connection|credential}/{id}` | resource grants (all-zero UUID = root) |
+| GET/PUT | `/acl/{folder|connection|credential|cred_folder}/{id}` | resource grants (all-zero UUID = root) |
 | GET | `/acl/effective?resource_type=&resource_id=&user_id=` | effective permission |
 | GET/POST/DELETE | `/known-hosts[/{id}]` | trusted SSH host keys |
 | GET | `/audit` | audit log (`action` supports `prefix.*`, `actor_id`, `resource_*`, `outcome`, `since`, `until`) |

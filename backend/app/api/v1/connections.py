@@ -33,7 +33,9 @@ from app.security.crypto import aad_for, get_box
 from app.services import audit
 from app.services.app_settings import RuntimeSettings, get_runtime
 from app.services.authz import LEVEL_NAMES, AccessContext, Perm
-from app.services.resolution import resolve_connection, would_create_cycle
+from app.services.credential_attributes import get_attributes
+from app.services.lookups import LookupFailed, find_credential, parse_lookup, substitute
+from app.services.resolution import AUTH_FIELDS, resolve_connection, would_create_cycle
 
 router = APIRouter(tags=["connections"])
 
@@ -98,11 +100,69 @@ async def tree(principal: Principal = Depends(get_access), db: AsyncSession = De
         if visible_c else []
     )
     favs = await _favorites(db, principal.id)
+    resolved = await display_lookups(db, list(conns), access)
+    outs = []
+    for c in conns:
+        out = connection_out(c, access, runtime, favs)
+        out.resolved = resolved.get(c.id, {})
+        outs.append(out)
     return TreeOut(
         folders=sorted((folder_out(f, access) for f in folders), key=lambda f: (f.sort_order, f.name.lower())),
-        connections=sorted((connection_out(c, access, runtime, favs) for c in conns),
-                           key=lambda c: (c.sort_order, c.name.lower())),
+        connections=sorted(outs, key=lambda c: (c.sort_order, c.name.lower())),
     )
+
+
+DISPLAY_LOOKUP_FIELDS = ("hostname", "port", "description", "search_domain", "username", "domain")
+
+
+async def display_lookups(db: AsyncSession, conns: list[m.Connection], access: AccessContext) -> dict[uuid.UUID, dict]:
+    """Values of non-secret lookup fields for display (tree labels): {connection id: {field: value}}.
+    Failing lookups are left out; opening the connection reports them."""
+    targets = [c for c in conns if any(f in (c.lookups or {}) for f in DISPLAY_LOOKUP_FIELDS)]
+    if not targets:
+        return {}
+    creds = [c for c in (await db.execute(select(m.Credential))).scalars().all()
+             if access.can("credential", c.id, "view")]
+    by_id = {c.id: c for c in creds}
+    candidates = [(c.id, c.name) for c in creds]
+    conn_by_id = {c.id: c for c in conns}
+
+    def value_of(pattern: str, ctx: dict[str, str | None], fname: str) -> str | None:
+        cid = find_credential(substitute(pattern, ctx), candidates)
+        cred = by_id[cid]  # type: ignore[index]
+        if fname in ("username", "domain"):
+            return getattr(cred, fname)
+        if fname in AUTH_FIELDS:
+            return None  # secret: never shown
+        v = get_attributes(cred).get(fname)  # secret attributes are never shown
+        return None if v in (None, "") else str(v)
+
+    out: dict[uuid.UUID, dict] = {}
+    for c in targets:
+        chain = [c]
+        while chain[-1].parent_id in conn_by_id and len(chain) < 32:
+            chain.append(conn_by_id[chain[-1].parent_id])  # type: ignore[index]
+        ctx: dict[str, str | None] = {
+            "name": c.name,
+            "hostname": next((x.hostname for x in chain if x.hostname), None),
+            "domain": next((x.search_domain for x in chain if x.search_domain), None),
+        }
+        values: dict[str, str] = {}
+        order = ["hostname"] + [f for f in DISPLAY_LOOKUP_FIELDS if f != "hostname"]
+        for fname in order:
+            lk = parse_lookup((c.lookups or {}).get(fname))
+            if lk is None:
+                continue
+            try:
+                v = value_of(lk.pattern, ctx, lk.field)
+            except LookupFailed:
+                continue
+            if v is not None:
+                values[fname] = v
+                if fname == "hostname":
+                    ctx["hostname"] = v
+        out[c.id] = values
+    return out
 
 
 # --------------------------------------------------------------------------- folders
@@ -248,7 +308,11 @@ async def list_connections(
 
 
 async def _check_references(db: AsyncSession, access: AccessContext, settings_data: dict[str, Any],
-                            credential_id: uuid.UUID | None) -> None:
+                            credential_id: uuid.UUID | None, credential_folder_id: uuid.UUID | None = None) -> None:
+    if credential_folder_id is not None:
+        if await db.get(m.CredentialFolder, credential_folder_id) is None \
+                or not access.can("cred_folder", credential_folder_id, "view"):
+            raise ValidationFailed("credential folder not found")
     if credential_id is not None:
         cred = await db.get(m.Credential, credential_id)
         if cred is None or not access.can("credential", credential_id, "view"):
@@ -283,9 +347,22 @@ def _normalise_auth(conn: m.Connection) -> None:
         conn.password_enc = None
     if conn.auth_mode != "credential":
         conn.credential_id = None
+    if conn.auth_mode != "credential" or conn.credential_id is not None:
+        conn.credential_folder_id = None
     if conn.auth_mode in ("inherit", "credential"):
         conn.username = None
         conn.domain = None
+    lookups = dict(conn.lookups or {})
+    if conn.auth_mode not in ("direct", "interactive"):
+        # login lookups belong to "connection specific" authentication
+        lookups = {k: v for k, v in lookups.items() if k not in AUTH_FIELDS}
+    # a field with a lookup has no own value
+    for fname in lookups:
+        if fname == "password":
+            conn.password_enc = None
+        elif fname in ("hostname", "port", "username", "domain", "search_domain", "description"):
+            setattr(conn, fname, None)
+    conn.lookups = lookups
 
 
 @router.post("/connections", response_model=ConnectionOut, status_code=201, summary="Create a connection")
@@ -306,7 +383,8 @@ async def create_connection(body: ConnectionCreate, request: Request, principal:
             raise Forbidden("not allowed to create connections here")
     auth_mode = body.auth_mode or "inherit"
     settings_data = validate_settings(body.protocol, body.settings)
-    await _check_references(db, access, settings_data, body.credential_id if auth_mode == "credential" else None)
+    await _check_references(db, access, settings_data, body.credential_id if auth_mode == "credential" else None,
+                            body.credential_folder_id if auth_mode == "credential" else None)
 
     idem = await idempotency(db, request, principal, body)
     if idem.replay:
@@ -318,6 +396,7 @@ async def create_connection(body: ConnectionCreate, request: Request, principal:
         username=body.username, domain=body.domain, credential_id=body.credential_id,
         search_domain=body.search_domain, description=body.description, tags=body.tags or [],
         settings=settings_data, sort_order=body.sort_order or 0, owner_id=principal.id,
+        lookups=body.lookups or {}, credential_folder_id=body.credential_folder_id,
     )
     _apply_password(conn, body.password)
     _normalise_auth(conn)
@@ -346,8 +425,10 @@ async def effective_connection(connection_id: uuid.UUID, principal: Principal = 
                                db: AsyncSession = Depends(get_db, scope="function"),
                                settings: Settings = Depends(settings_dep)) -> dict[str, Any]:
     await _get_connection(db, principal.access, connection_id, "view")
+    access = principal.access
     eff = await resolve_connection(db, connection_id, box=None, include_secrets=False,
-                                   env_search_domains=settings.search_domains)
+                                   env_search_domains=settings.search_domains,
+                                   credential_filter=lambda cid: access.can("credential", cid, "view"))
     return eff.public()
 
 
@@ -379,11 +460,16 @@ async def update_connection(connection_id: uuid.UUID, body: ConnectionUpdate,
         conn.auth_mode = body.auth_mode
     if "credential_id" in fields:
         conn.credential_id = body.credential_id
+    if "credential_folder_id" in fields:
+        conn.credential_folder_id = body.credential_folder_id
+    if "lookups" in fields:
+        conn.lookups = body.lookups or {}
     if "password" in fields:
         _apply_password(conn, body.password)
     await _check_references(
         db, access, conn.settings or {},
         conn.credential_id if ("credential_id" in fields and conn.auth_mode == "credential") else None,
+        conn.credential_folder_id if "credential_folder_id" in fields else None,
     )
     _normalise_auth(conn)
     conn.version += 1
@@ -468,6 +554,7 @@ async def _clone(db: AsyncSession, src: m.Connection, *, name: str, folder_id: u
         username=src.username, domain=src.domain, credential_id=src.credential_id,
         search_domain=src.search_domain, description=src.description, tags=list(src.tags or []),
         settings=dict(src.settings or {}), sort_order=src.sort_order, owner_id=owner_id,
+        lookups=dict(src.lookups or {}), credential_folder_id=src.credential_folder_id,
     )
     if src.password_enc:
         plain = box.decrypt(src.password_enc, aad_for("connections", "password", src.id))

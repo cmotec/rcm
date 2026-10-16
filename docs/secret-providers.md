@@ -1,18 +1,18 @@
-# External secret managers (Infisical, OpenBao)
+# External secrets (OpenBao / Vault)
 
 Credential entries can take individual fields (username, password, domain, private key,
-passphrase) from an external secret manager. Synchronisation is optional, runs one way
+passphrase) from OpenBao, or another server with the Vault KV API (HashiCorp Vault).
+The KV secrets engine (v1 or v2) is read with a token or AppRole. Synchronisation is optional, runs one way
 (external → local) and never silently overwrites local changes.
 
 ## Providers
 
 | Provider | Auth | Secret reference (`external_ref`) |
 |---|---|---|
-| Infisical | Universal Auth (client ID + secret) | `{"path": "/folder", "key": "SECRET_NAME", "environment": "prod"?}` (environment defaults to the provider's) |
 | OpenBao (Vault-compatible) | token or AppRole | `{"path": "apps/db", "key": "password"}`: KV v2 at `<mount>/data/<path>` (or KV v1) |
 
 Providers are added under *Administration → Secret providers*, or through environment
-variables (`INFISICAL_*`, `OPENBAO_*`). Environment-configured providers are read-only in the
+variables (`OPENBAO_*`). Environment-configured providers are read-only in the
 UI. Provider credentials are encrypted at rest. *Test* checks authentication, and *Browse* lists
 secret names (never values).
 
@@ -22,7 +22,50 @@ Adding another provider: implement `SecretProviderClient` (`test`, `get`, `brows
 ## Mapping
 
 In the credential store, open a credential → *External secrets*. Add one row per field: the
-provider, path, key and policies. *Save & sync* stores the mapping and synchronises immediately.
+provider, path, key and policies; the magnifier button browses the provider (names only, never
+values; needs `secrets.manage`). A key without a name is entered as an empty key. *Save & sync*
+stores the mapping and synchronises immediately.
+
+## Automatic import (OpenBao)
+
+With *Create credentials automatically* (`auto_import`, or `OPENBAO_AUTO_IMPORT=true` for the
+provider from environment variables), every full sync walks the KV mount, or only the part below
+*import path* (`OPENBAO_IMPORT_PATH`):
+
+* each secret becomes a credential named after the secret (last path segment);
+* its keys are matched to the credential fields by name, ignoring case, `_`, `-` and spaces:
+
+  | Field | Keys |
+  |---|---|
+  | username | `username`, `user`, `login`, `userid`, `account`, `benutzer`, `benutzername` |
+  | password | `password`, `pass`, `passwd`, `pwd`, `secret`, `kennwort`, `passwort` |
+  | domain | `domain`, `domäne`, `ntdomain`, `userdomain` |
+  | private_key | `private_key`, `ssh_key`, `key`, `id_rsa`, `id_ed25519` |
+  | passphrase | `passphrase`, `key_passphrase`, `ssh_passphrase` |
+
+  A secret with a single key that matches none of these, for example a key without a name, is
+  taken as the password. Secrets without any usable key are skipped.
+* every **other key** becomes a credential **attribute** (`attr:<key>`): values such as `port`,
+  `description` or `hostname` that connections read with lookups, e.g. `{{lookup:{hostname}_root:port}}`.
+  Attributes are encrypted at rest and visible to everyone who may view the credential.
+* keys whose name looks secret (containing token, secret, key, pass, pin, cert, private, auth, …)
+  become **secret attributes** (`secret:<key>`): encrypted, write-only like the password, never shown,
+  used only by sessions through lookups (and viewable with the audited *Reveal*).
+* **folders:** choose a credential folder in the provider settings; the secret's path below
+  *import path* is mirrored as sub-folders there (`infrastructure/dmz/web01` → `<folder>/dmz/web01`).
+  Without a folder, the structure starts at the top level. Only newly created credentials are placed;
+  credentials you moved stay where they are.
+* the matched keys become mappings and the sync fills in the values. Keys added to a secret later
+  get mappings on the next sync.
+* a credential that already has the secret's name, and is not linked to this provider yet, is linked
+  instead of creating a second one. Local values that differ become conflicts; nothing is
+  overwritten silently.
+* credentials are never deleted by the import. When a secret is removed, its mappings show
+  `remote_missing`. A deleted auto-imported credential comes back on the next sync while the secret
+  still exists; limit the import with *import path* instead.
+
+New credentials belong to the user who started the sync; scheduled syncs create them without an
+owner, so only administrators (and explicit grants) see them until permissions are set.
 
 ## Synchronisation and conflicts
 

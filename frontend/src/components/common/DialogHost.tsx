@@ -1,6 +1,6 @@
 import { ShieldAlert, TriangleAlert } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
-import { useCredentials } from '../../api/hooks';
+import { folderPath, folderSubtree, useCredentialFolders, useCredentials } from '../../api/hooks';
 import type { Protocol } from '../../api/types';
 import { type DialogRequest, type InteractiveCredentials, useDialogStore } from '../../state/dialogs';
 import { Modal } from './Modal';
@@ -143,9 +143,12 @@ function typedCredentials(v: InteractiveCredentials): InteractiveCredentials {
 
 function ChooseCredentialDialog({ req }: { req: Extract<DialogRequest, { kind: 'choose-credential' }> }) {
   const { data, isLoading } = useCredentials();
+  const { data: folders } = useCredentialFolders();
   const [filter, setFilter] = useState('');
-  // only credentials the user may use (connect or higher)
-  const usable = (data?.items ?? []).filter((c) => ['connect', 'edit', 'manage'].includes(c.permission ?? ''));
+  // only credentials the user may use (connect or higher), from the connection's folder if it has one
+  const allowedFolders = req.folderId ? folderSubtree(folders ?? [], req.folderId) : null;
+  const usable = (data?.items ?? []).filter((c) => ['connect', 'edit', 'manage'].includes(c.permission ?? ''))
+    .filter((c) => !allowedFolders || Boolean(c.folder_id && allowedFolders.has(c.folder_id)));
   const shown = usable.filter((c) => !filter || `${c.name} ${c.username ?? ''} ${c.domain ?? ''}`.toLowerCase().includes(filter.toLowerCase()));
   const [selected, setSelected] = useState<string | null>(null);
   const [tab, setTab] = useState<'store' | 'own' | null>(null);
@@ -172,7 +175,8 @@ function ChooseCredentialDialog({ req }: { req: Extract<DialogRequest, { kind: '
       </div>
       {active === 'store' ? (
         <>
-          <p className="muted">Choose the credential to use for this session.</p>
+          <p className="muted">Choose the credential to use for this session
+            {req.folderId ? <> (from <b>{folderPath(folders ?? [], req.folderId) || 'its folder'}</b>)</> : null}.</p>
           {usable.length > 6 && (
             <input placeholder="Filter…" value={filter} onChange={(e) => setFilter(e.target.value)} autoFocus />
           )}

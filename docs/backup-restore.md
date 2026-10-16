@@ -49,7 +49,7 @@ If the backup is older than the current code, the start-up migration upgrades it
 | Scenario | Recovery |
 |---|---|
 | Database lost | restore the latest dump. Changes after it are lost. |
-| Encryption key lost | data stays readable, but every stored password, key and provider secret is unusable. Re-enter them, or re-sync from Infisical/OpenBao. Connections, folders and ACLs survive. |
+| Encryption key lost | data stays readable, but every stored password, key and provider secret is unusable. Re-enter them, or re-sync from OpenBao. Connections, folders and ACLs survive. |
 | Key compromised | add a new key, set it active, run `python -m app.cli rotate-keys`, remove the old key, rotate the remote passwords themselves. |
 | IdP outage | enable `LOCAL_AUTH_ENABLED` and use the recovery admin. |
 | Host lost | new host + same `.env` + database → `docker compose up -d`. |

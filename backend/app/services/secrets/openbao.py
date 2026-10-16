@@ -19,6 +19,11 @@ class OpenBaoConfig(BaseModel):
     auth_method: Literal["token", "approle"] = "token"
     approle_mount: str = "approle"
     verify_tls: bool = True
+    # automatic import: every secret below import_path becomes a credential (see secrets/discovery.py)
+    auto_import: bool = False
+    import_path: str = ""
+    # credential folder that mirrors the OpenBao paths of imported secrets (None = top level)
+    import_folder_id: str | None = None
 
 
 class OpenBaoSecrets(BaseModel):
@@ -99,6 +104,15 @@ class OpenBaoClient(SecretProviderClient):
     async def browse(self, path: str) -> list[BrowseItem]:
         headers = await self._headers()
         resp = await self._request("LIST", self._list_url(path), headers=headers)
+        if resp.status_code == 404 and not path.strip("/"):
+            # OpenBao answers 404 for an unknown mount and for an empty one alike: say so instead of
+            # showing an empty list.
+            cfg: OpenBaoConfig = self.config  # type: ignore[assignment]
+            raise ProviderError(
+                f"openbao: nothing found in the KV mount '{cfg.mount}' (KV version {cfg.kv_version}). Check the "
+                f"mount name (the name of the secrets engine, e.g. 'infrastructure'), the KV version, and that "
+                f"the token may list '{cfg.mount}/{'metadata/' if cfg.kv_version == 2 else ''}*'."
+            )
         if resp.status_code == 404:
             items: list[BrowseItem] = []
         elif resp.status_code != 200:

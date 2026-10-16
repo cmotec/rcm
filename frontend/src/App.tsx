@@ -26,6 +26,7 @@ import { ConnectionDialog } from './components/dialogs/ConnectionDialog';
 import { FolderDialog } from './components/dialogs/FolderDialog';
 import { LoginPage } from './components/LoginPage';
 import { SignageView } from './components/SignageView';
+import { PopupSessionView, popupSessionId } from './workspace/PopupSessionView';
 import { ProfileDialog } from './components/ProfileDialog';
 import { TokensDialog } from './components/TokensDialog';
 import { ConnectionTree } from './components/tree/ConnectionTree';
@@ -87,10 +88,6 @@ function Shell() {
   useEffect(() => {
     document.title = APP_NAME;
   }, []);
-
-  useEffect(() => {
-    if (me?.csrf_token) setCsrfToken(me.csrf_token);
-  }, [me]);
 
   useEffect(() => {
     if (started.current) return;
@@ -262,6 +259,11 @@ function AuthGate() {
   const qc = useQueryClient();
   const onLoggedIn = useCallback(() => void qc.invalidateQueries({ queryKey: keys.me }), [qc]);
 
+  // every page (main app, session window, signage) sends the CSRF token with changing requests
+  useEffect(() => {
+    if (me.data?.csrf_token) setCsrfToken(me.data.csrf_token);
+  }, [me.data]);
+
   useEffect(() => {
     setUnauthenticatedHandler(() => void qc.invalidateQueries({ queryKey: keys.me }));
   }, [qc]);
@@ -278,6 +280,8 @@ function AuthGate() {
   }
   if (window.location.pathname.startsWith('/login')) window.history.replaceState(null, '', '/');
   if (me.data.signage) return <SignageView />;
+  const popupId = popupSessionId(window.location.pathname);
+  if (popupId) return <PopupSessionView sessionId={popupId} />;
   return <Shell />;
 }
 

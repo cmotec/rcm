@@ -90,7 +90,16 @@ export interface Connection {
   permission: PermissionLevel | null;
   favorite: boolean;
   warnings: SecurityWarning[];
+  /** field -> {{lookup:<credential name pattern>:<field>}} */
+  lookups: Partial<Record<LookupField, string>>;
+  /** "choose a credential at connect time": only credentials from this credential folder */
+  credential_folder_id: string | null;
+  /** display values of lookup fields, resolved on the server (hostname, port, description, …) */
+  resolved: Partial<Record<LookupField, string>>;
 }
+
+export type LookupField = 'username' | 'password' | 'domain' | 'private_key' | 'passphrase'
+  | 'hostname' | 'port' | 'search_domain' | 'description';
 
 export interface Tree {
   folders: Folder[];
@@ -98,7 +107,7 @@ export interface Tree {
 }
 
 export interface ValueSource {
-  kind: 'connection' | 'credential' | 'interactive' | 'folder' | 'environment' | 'default';
+  kind: 'connection' | 'credential' | 'interactive' | 'folder' | 'environment' | 'default' | 'lookup';
   id: string | null;
   name: string | null;
 }
@@ -122,8 +131,12 @@ export interface EffectiveConnection {
   auth: Partial<Record<'username' | 'password' | 'domain' | 'private_key' | 'passphrase', ResolvedValue<string>>>;
   prompt_required: boolean;
   credential_choice_required: boolean;
+  credential_choice_folder_id?: string | null;
   interactive_connection_id: string | null;
   chain: { id: string; name: string; protocol: Protocol }[];
+  description?: ResolvedValue<string> | null;
+  /** field -> why its lookup failed */
+  lookup_errors?: Record<string, string>;
 }
 
 export interface Credential {
@@ -148,6 +161,21 @@ export interface Credential {
   permission: PermissionLevel | null;
   external_fields: string[];
   usage_count: number;
+  folder_id: string | null;
+  /** values for lookups (port, hostname, description, …), encrypted at rest, shown to viewers */
+  attributes: Record<string, string>;
+  /** names of the write-only secret attributes (values are never returned) */
+  secret_attribute_names: string[];
+}
+
+export interface CredentialFolder {
+  id: string;
+  name: string;
+  parent_id: string | null;
+  description: string | null;
+  owner_id: string | null;
+  version: number;
+  permission: PermissionLevel | null;
 }
 
 export interface CredentialSecrets {
@@ -156,6 +184,7 @@ export interface CredentialSecrets {
   password: string | null;
   private_key: string | null;
   passphrase: string | null;
+  secret_attributes?: Record<string, string> | null;
 }
 
 export type SessionKind = 'guac' | 'terminal' | 'files';
@@ -270,7 +299,7 @@ export interface KnownHost {
 export interface SecretProvider {
   id: string;
   name: string;
-  type: 'infisical' | 'openbao';
+  type: 'openbao';
   config: Record<string, unknown>;
   secret_fields_set: string[];
   enabled: boolean;

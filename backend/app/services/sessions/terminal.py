@@ -6,6 +6,7 @@ server → browser: binary = terminal output; text = JSON control messages
   {"type": "status", "state": "connecting" | "connected"}
   {"type": "error", "code": "...", "message": "..."}
   {"type": "exit", "status": <int | null>}
+  {"type": "pong"}                    (answer to ping; the browser's heartbeat)
 browser → server: binary = keyboard input; text = JSON control messages
   {"type": "resize", "cols": <int>, "rows": <int>}
   {"type": "ping"}

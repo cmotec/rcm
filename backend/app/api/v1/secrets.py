@@ -1,13 +1,14 @@
-"""External secret providers (Infisical, OpenBao) and credential mappings."""
+"""External secret provider (OpenBao, Vault-compatible) and credential mappings."""
 
 from __future__ import annotations
 
+import re
 import uuid
 from datetime import datetime
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, Query
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -36,7 +37,7 @@ router = APIRouter(tags=["secret providers"])
 class ProviderIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
     name: str = Field(min_length=1, max_length=255)
-    type: Literal["infisical", "openbao"]
+    type: Literal["openbao"]
     config: dict[str, Any]
     secrets: dict[str, Any] = Field(default_factory=dict, description="write-only (client secret, token, …)")
     enabled: bool = True
@@ -68,9 +69,25 @@ class ProviderOut(BaseModel):
     conflict_count: int = 0
 
 
+_ATTR_FIELD = re.compile(r"^(attr|secret):[A-Za-z0-9_.\-]{1,59}$")
+
+
+def check_mapping_field(v: str) -> str:
+    """A credential field, an attribute (attr:<name>) or a secret attribute (secret:<name>)."""
+    if v in m.SECRET_FIELDS or _ATTR_FIELD.match(v):
+        return v
+    raise ValueError(f"field must be one of {', '.join(m.SECRET_FIELDS)}, attr:<name> or secret:<name>")
+
+
 class MappingIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    field: Literal["username", "password", "domain", "private_key", "passphrase"]
+    field: str = Field(description="username, password, domain, private_key, passphrase, attr:<name> or "
+                                   "secret:<name>")
+
+    @field_validator("field")
+    @classmethod
+    def _field(cls, v: str) -> str:
+        return check_mapping_field(v)
     provider_id: uuid.UUID
     external_ref: SecretRef
     conflict_policy: Literal["manual", "prefer_remote", "prefer_local"] = "manual"
@@ -100,7 +117,14 @@ class ImportItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
     name: str = Field(min_length=1, max_length=255)
     username: str | None = Field(None, max_length=255, description="literal username (optional)")
-    fields: dict[Literal["username", "password", "domain", "private_key", "passphrase"], SecretRef]
+    fields: dict[str, SecretRef]
+
+    @field_validator("fields")
+    @classmethod
+    def _fields(cls, v: dict[str, SecretRef]) -> dict[str, SecretRef]:
+        for k in v:
+            check_mapping_field(k)
+        return v
 
 
 class ImportIn(BaseModel):
@@ -128,7 +152,7 @@ async def _get_provider(db: AsyncSession, provider_id: uuid.UUID) -> m.SecretPro
 
 
 def _check_enabled(settings: Settings, ptype: str) -> None:
-    if (ptype == "infisical" and not settings.INFISICAL_ENABLED) or (ptype == "openbao" and not settings.OPENBAO_ENABLED):
+    if ptype == "openbao" and not settings.OPENBAO_ENABLED:
         raise ValidationFailed(f"the {ptype} integration is disabled on this server")
 
 

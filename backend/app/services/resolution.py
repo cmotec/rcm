@@ -9,11 +9,16 @@ The rules are documented in docs/architecture.md, section 5. Summary:
 * credentials, per field: interactive input (at the position of the
   interactive connection in the chain) → the connection's own values for
   its ``auth_mode`` → the parent's effective value if ``inherit_auth``.
+* lookups (``connections.lookups``, see services/lookups.py) take the place of the
+  connection's own value for that field; their placeholders refer to the opened
+  connection. A failing lookup leaves the field empty and is reported in
+  ``lookup_errors`` (launching refuses then).
 """
 
 from __future__ import annotations
 
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -23,6 +28,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app import models as m
 from app.errors import NotFound, ValidationFailed
 from app.security.crypto import SecretBox, aad_for
+from app.services.credential_attributes import get_attributes, get_secret_attributes
+from app.services.lookups import LookupFailed, find_credential, parse_lookup, substitute
 
 MAX_CHAIN = 32
 AUTH_FIELDS = ("username", "password", "domain", "private_key", "passphrase")
@@ -57,7 +64,7 @@ class AuthOverride:
 
 @dataclass(frozen=True)
 class Source:
-    kind: str  # connection | credential | interactive | folder | environment | default
+    kind: str  # connection | credential | interactive | folder | environment | default | lookup
     id: str | None = None
     name: str | None = None
 
@@ -94,6 +101,11 @@ class EffectiveConnection:
     # auth_mode "credential" without a pinned credential: the user picks one at connect time
     credential_choice_connection_id: uuid.UUID | None = None
     chosen_credential_id: uuid.UUID | None = None
+    # …limited to this credential folder (and below), if the connection says so
+    credential_choice_folder_id: uuid.UUID | None = None
+    description: Resolved | None = None
+    # field -> why its lookup failed (only lookups that decide an effective value)
+    lookup_errors: dict[str, str] = field(default_factory=dict)
 
     @property
     def credential_choice_required(self) -> bool:
@@ -133,6 +145,11 @@ class EffectiveConnection:
             "auth": {k: v.public(secret=k in SECRET_AUTH_FIELDS) for k, v in self.auth.items()},
             "prompt_required": self.prompt_required,
             "credential_choice_required": self.credential_choice_connection_id is not None,
+            "credential_choice_folder_id": (
+                str(self.credential_choice_folder_id) if self.credential_choice_folder_id else None
+            ),
+            "description": self.description.public() if self.description else None,
+            "lookup_errors": dict(self.lookup_errors),
             "interactive_connection_id": (
                 str(self.interactive_connection_id) if self.interactive_connection_id else None
             ),
@@ -211,7 +228,8 @@ async def load_credential_chain(db: AsyncSession, credential_id: uuid.UUID | Non
 
 
 async def would_create_cycle(
-    db: AsyncSession, model: type[m.Folder] | type[m.Connection] | type[m.Credential],
+    db: AsyncSession,
+    model: type[m.Folder] | type[m.Connection] | type[m.Credential] | type[m.CredentialFolder],
     item_id: uuid.UUID, new_parent_id: uuid.UUID | None,
 ) -> bool:
     current = new_parent_id
@@ -267,15 +285,25 @@ def _connection_own(
     box: SecretBox | None,
     include_secrets: bool,
     chosen_credential_id: uuid.UUID | None = None,
+    lookups: dict[tuple[uuid.UUID, str], Resolved] | None = None,
+    lookup_errors: dict[tuple[uuid.UUID, str], str] | None = None,
+    errors_out: dict[str, str] | None = None,
 ) -> dict[str, Resolved]:
     src = Source("connection", str(conn.id), conn.name)
     vals: dict[str, Resolved] = {}
     if conn.auth_mode in ("direct", "interactive"):
-        if conn.username:
+        # connection-specific values may come from the credential store through lookups
+        for fname in AUTH_FIELDS:
+            key = (conn.id, fname)
+            if lookups and key in lookups:
+                vals[fname] = lookups[key]
+            elif lookup_errors and key in lookup_errors and errors_out is not None:
+                errors_out.setdefault(fname, lookup_errors[key])
+        if conn.username and "username" not in vals:
             vals["username"] = Resolved(conn.username, src)
-        if conn.domain:
+        if conn.domain and "domain" not in vals:
             vals["domain"] = Resolved(conn.domain, src)
-        if conn.auth_mode == "direct" and conn.password_enc:
+        if conn.auth_mode == "direct" and conn.password_enc and "password" not in vals:
             value = (
                 box.decrypt(conn.password_enc, aad_for("connections", "password", conn.id))
                 if include_secrets and box
@@ -303,7 +331,10 @@ async def resolve_connection(
     interactive: dict[str, str] | None = None,
     chosen_credential_id: uuid.UUID | None = None,
     auth_override: AuthOverride | None = None,
+    credential_filter: Callable[[uuid.UUID], bool] | None = None,
 ) -> EffectiveConnection:
+    """``credential_filter``: which credentials lookups may use (e.g. those the user may connect with);
+    None = all."""
     chain = await load_connection_chain(db, connection_id)
     credentials: dict[uuid.UUID, list[m.Credential]] = {}
     for conn in chain:
@@ -314,6 +345,10 @@ async def resolve_connection(
             credentials[extra] = await load_credential_chain(db, extra)
     top = chain[-1]
     folders = await load_folder_chain(db, top.folder_id)
+    lookups, lookup_errors = await resolve_lookups(
+        db, chain, folders, env_search_domains, box=box, include_secrets=include_secrets,
+        credential_filter=credential_filter,
+    )
     return compute_effective(
         chain,
         credentials,
@@ -324,7 +359,110 @@ async def resolve_connection(
         interactive=interactive,
         chosen_credential_id=chosen_credential_id,
         auth_override=auth_override,
+        lookups=lookups,
+        lookup_errors=lookup_errors,
     )
+
+
+def _literal_search_domain(chain: list[m.Connection], folders: list[m.Folder], env: list[str]) -> str | None:
+    for c in chain:
+        if c.search_domain:
+            return c.search_domain.strip(".")
+    for f in folders:
+        if f.search_domain:
+            return f.search_domain.strip(".")
+    return env[0].strip(".") if env else None
+
+
+def credential_lookup_value(creds: list[m.Credential], fname: str, box: SecretBox | None,
+                            include_secrets: bool) -> Any:
+    """``fname`` of the credential (chain): a login field, an attribute, or a secret attribute.
+    Secrets (fields and secret attributes) are only decrypted with ``include_secrets`` (sessions);
+    otherwise their value is None."""
+    name = creds[0].name
+    if fname in AUTH_FIELDS:
+        r = credential_values(creds, box, include_secrets=include_secrets).get(fname)
+        if r is None:
+            raise LookupFailed(f"credential '{name}' has no {fname}")
+        return r.value
+    for cred in creds:
+        v = get_attributes(cred, box).get(fname)
+        if v not in (None, ""):
+            return str(v)
+    for cred in creds:
+        if cred.secret_attributes_enc is None:
+            continue
+        if not include_secrets:
+            if fname in get_secret_attributes(cred, box):
+                return None  # set, but secret: only a session reads it
+            continue
+        v = get_secret_attributes(cred, box).get(fname)
+        if v not in (None, ""):
+            return str(v)
+    raise LookupFailed(f"credential '{name}' has no attribute '{fname}'")
+
+
+async def resolve_lookups(
+    db: AsyncSession,
+    chain: list[m.Connection],
+    folders: list[m.Folder],
+    env_search_domains: list[str],
+    *,
+    box: SecretBox | None,
+    include_secrets: bool,
+    credential_filter: Callable[[uuid.UUID], bool] | None,
+) -> tuple[dict[tuple[uuid.UUID, str], Resolved], dict[tuple[uuid.UUID, str], str]]:
+    """Every lookup in the chain: {(connection id, field): value} and {(connection id, field): error}."""
+    if not any(c.lookups for c in chain):
+        return {}, {}
+    rows = (await db.execute(select(m.Credential.id, m.Credential.name))).all()
+    candidates = [(r.id, r.name) for r in rows if credential_filter is None or credential_filter(r.id)]
+    creds_cache: dict[uuid.UUID, list[m.Credential]] = {}
+    ctx: dict[str, str | None] = {
+        "name": chain[0].name,
+        "hostname": None,
+        "domain": _literal_search_domain(chain, folders, env_search_domains),
+    }
+    results: dict[tuple[uuid.UUID, str], Resolved] = {}
+    errors: dict[tuple[uuid.UUID, str], str] = {}
+
+    async def one(c: m.Connection, fname: str, expr: str) -> None:
+        try:
+            lk = parse_lookup(expr)
+            if lk is None:
+                raise LookupFailed(f"'{expr}' is not a valid lookup")
+            cid = find_credential(substitute(lk.pattern, ctx), candidates)
+            if not isinstance(cid, uuid.UUID):
+                raise LookupFailed("unexpected credential id")
+            if cid not in creds_cache:
+                creds_cache[cid] = await load_credential_chain(db, cid)
+            creds = creds_cache[cid]
+            value = credential_lookup_value(creds, lk.field, box, include_secrets)
+            results[(c.id, fname)] = Resolved(value, Source("lookup", str(cid), creds[0].name))
+        except LookupFailed as exc:
+            errors[(c.id, fname)] = str(exc)
+
+    # 1. hostname lookups (they cannot use {hostname}), then the hostname placeholder
+    for c in chain:
+        expr = (c.lookups or {}).get("hostname")
+        if expr:
+            await one(c, "hostname", expr)
+    for c in chain:
+        r = results.get((c.id, "hostname"))
+        if r is not None:
+            ctx["hostname"] = str(r.value).strip()
+            break
+        if (c.id, "hostname") in errors:
+            break
+        if c.hostname:
+            ctx["hostname"] = c.hostname.strip()
+            break
+    # 2. everything else
+    for c in chain:
+        for fname, expr in (c.lookups or {}).items():
+            if fname != "hostname":
+                await one(c, fname, expr)
+    return results, errors
 
 
 def compute_effective(
@@ -338,49 +476,101 @@ def compute_effective(
     interactive: dict[str, str] | None = None,
     chosen_credential_id: uuid.UUID | None = None,
     auth_override: AuthOverride | None = None,
+    lookups: dict[tuple[uuid.UUID, str], Resolved] | None = None,
+    lookup_errors: dict[tuple[uuid.UUID, str], str] | None = None,
 ) -> EffectiveConnection:
     conn = chain[0]
+    lookups = lookups or {}
+    lookup_errors = lookup_errors or {}
+    errors: dict[str, str] = {}
+
+    def from_lookup(c: m.Connection, fname: str) -> Resolved | None | bool:
+        """The lookup value of c.fname; False if its lookup failed (error recorded); None without lookup."""
+        key = (c.id, fname)
+        if key in lookups:
+            return lookups[key]
+        if key in lookup_errors:
+            errors.setdefault(fname, lookup_errors[key])
+            return False
+        return None
 
     # hostname -----------------------------------------------------------------
     hostname: Resolved | None = None
     for idx, c in enumerate(chain):
+        lk = from_lookup(c, "hostname")
+        if lk is False:
+            break
+        if isinstance(lk, Resolved):
+            hostname = Resolved(str(lk.value).strip(), lk.source, inherited=idx > 0)
+            break
         if c.hostname:
             hostname = Resolved(c.hostname.strip(), Source("connection", str(c.id), c.name), inherited=idx > 0)
             break
 
     # port -----------------------------------------------------------------------
-    port: Resolved | None
-    if conn.port:
+    port: Resolved | None = None
+    lk_port = from_lookup(conn, "port")
+    if isinstance(lk_port, Resolved) and lk_port.value is None:
+        port = Resolved(None, lk_port.source)  # from a secret attribute: known only to sessions
+    elif isinstance(lk_port, Resolved):
+        try:
+            port_value = int(str(lk_port.value).strip())
+            if not 1 <= port_value <= 65535:
+                raise ValueError
+            port = Resolved(port_value, lk_port.source)
+        except ValueError:
+            errors["port"] = f"the lookup returned '{lk_port.value}', which is not a port number"
+    elif lk_port is None and conn.port:
         port = Resolved(conn.port, Source("connection", str(conn.id), conn.name))
-    else:
+    if port is None and "port" not in errors:
         dp = default_port(conn.protocol, conn.settings)
         port = Resolved(dp, Source("default", None, f"{conn.protocol} default")) if dp else None
 
+    # description (own value only) -------------------------------------------------
+    description: Resolved | None = None
+    lk_desc = from_lookup(conn, "description")
+    if isinstance(lk_desc, Resolved):
+        description = lk_desc
+    elif lk_desc is None and conn.description:
+        description = Resolved(conn.description, Source("connection", str(conn.id), conn.name))
+
     # search domain ---------------------------------------------------------------
     search: Resolved | None = None
+    search_failed = False
     for idx, c in enumerate(chain):
+        lk = from_lookup(c, "search_domain")
+        if lk is False:
+            search_failed = True
+            break
+        if isinstance(lk, Resolved):
+            search = Resolved([str(lk.value).strip(".")], lk.source, idx > 0)
+            break
         if c.search_domain:
             search = Resolved([c.search_domain.strip(".")], Source("connection", str(c.id), c.name), idx > 0)
             break
-    if search is None:
+    if search is None and not search_failed:
         for f in folders:
             if f.search_domain:
                 search = Resolved([f.search_domain.strip(".")], Source("folder", str(f.id), f.name), True)
                 break
-    if search is None and env_search_domains:
+    if search is None and not search_failed and env_search_domains:
         search = Resolved(list(env_search_domains), Source("environment", None, "DNS_SEARCH_DOMAINS"), True)
 
     # credentials ---------------------------------------------------------------
     auth: dict[str, Resolved] = {}
     interactive_conn: uuid.UUID | None = None
     choice_conn: uuid.UUID | None = None
+    choice_folder: uuid.UUID | None = None
+    auth_errors: dict[str, str] = {}
     interactive = {k: v for k, v in (interactive or {}).items() if k in AUTH_FIELDS and v}
     for idx, c in enumerate(chain):
         choose_here = c.auth_mode == "credential" and not c.credential_id and choice_conn is None
         if choose_here:
             choice_conn = c.id
+            choice_folder = c.credential_folder_id
         own = _connection_own(c, credentials, box, include_secrets,
-                              chosen_credential_id if choose_here else None)
+                              chosen_credential_id if choose_here else None,
+                              lookups, lookup_errors, auth_errors)
         if c.auth_mode == "interactive" and interactive_conn is None:
             interactive_conn = c.id
             for k, v in interactive.items():
@@ -403,6 +593,9 @@ def compute_effective(
             auth = {k: Resolved(v, src) for k, v in (auth_override.values or {}).items() if k in AUTH_FIELDS and v}
         interactive_conn = None
         choice_conn = None
+        auth_errors = {}
+    # a failed auth lookup matters only if nothing else supplied the field
+    errors.update({k: v for k, v in auth_errors.items() if k not in auth})
 
     return EffectiveConnection(
         connection=conn,
@@ -415,4 +608,7 @@ def compute_effective(
         interactive_supplied=bool(interactive),
         credential_choice_connection_id=choice_conn,
         chosen_credential_id=chosen_credential_id if choice_conn else None,
+        credential_choice_folder_id=choice_folder if choice_conn else None,
+        description=description,
+        lookup_errors=errors,
     )

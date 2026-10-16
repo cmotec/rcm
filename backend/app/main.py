@@ -12,7 +12,18 @@ from fastapi import APIRouter, FastAPI, Request, Response
 from sqlalchemy import func, select
 
 from app import models as m
-from app.api.v1 import acl, admin, auth, connections, credentials, imports, secrets, sessions, system
+from app.api.v1 import (
+    acl,
+    admin,
+    auth,
+    connections,
+    credential_folders,
+    credentials,
+    imports,
+    secrets,
+    sessions,
+    system,
+)
 from app.config import APP_NAME, Settings, get_settings
 from app.context import RequestInfo, request_info
 from app.db import dispose_engine, init_engine, session_scope
@@ -124,7 +135,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return response
 
     v1 = APIRouter(prefix="/api/v1")
-    for r in (auth.router, auth.me_router, connections.router, credentials.router, acl.router, sessions.router,
+    for r in (auth.router, auth.me_router, connections.router, credentials.router, credential_folders.router,
+              acl.router, sessions.router,
               admin.router, secrets.router, imports.router, system.router):
         v1.include_router(r)
     app.include_router(v1)

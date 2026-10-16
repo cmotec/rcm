@@ -111,6 +111,7 @@ class AccessContext:
     _folders: dict[uuid.UUID, _Node] | None = None
     _connections: dict[uuid.UUID, _Node] | None = None
     _credentials: dict[uuid.UUID, _Node] | None = None
+    _cred_folders: dict[uuid.UUID, _Node] | None = None
     _memo: dict[tuple[str, uuid.UUID], int] = field(default_factory=dict)
 
     # ------------------------------------------------------------------ global
@@ -170,9 +171,18 @@ class AccessContext:
             ).all()
         }
         self._credentials = {
+            r.id: _Node(r.parent_id, r.owner_id, r.folder_id)
+            for r in (
+                await db.execute(
+                    select(m.Credential.id, m.Credential.parent_id, m.Credential.owner_id, m.Credential.folder_id)
+                )
+            ).all()
+        }
+        self._cred_folders = {
             r.id: _Node(r.parent_id, r.owner_id)
             for r in (
-                await db.execute(select(m.Credential.id, m.Credential.parent_id, m.Credential.owner_id))
+                await db.execute(select(m.CredentialFolder.id, m.CredentialFolder.parent_id,
+                                        m.CredentialFolder.owner_id))
             ).all()
         }
         self._memo.clear()
@@ -180,7 +190,7 @@ class AccessContext:
 
     def invalidate(self) -> None:
         self._acl = None
-        self._folders = self._connections = self._credentials = None
+        self._folders = self._connections = self._credentials = self._cred_folders = None
         self._memo.clear()
 
     # ------------------------------------------------------------------ evaluation
@@ -223,6 +233,23 @@ class AccessContext:
             seen += 1
         return max(best, self._folder_raw(folder_id))
 
+    def _cred_folder_raw(self, fid: uuid.UUID | None) -> int:
+        """Credential folders: grants on the folder and its ancestors, plus the credential-store root."""
+        assert self._cred_folders is not None and self._acl is not None
+        best = self._acl.get(("credential", ROOT_ID), 0)
+        seen = 0
+        while fid is not None and seen < MAX_DEPTH:
+            key = ("cred_folder", fid)
+            if key in self._memo:
+                return max(best, self._memo[key])
+            node = self._cred_folders.get(fid)
+            if node is None:
+                break
+            best = max(best, self._own("cred_folder", fid, node))
+            fid = node.parent_id
+            seen += 1
+        return best
+
     def _credential_raw(self, crid: uuid.UUID) -> int:
         assert self._credentials is not None and self._acl is not None
         best = self._acl.get(("credential", ROOT_ID), 0)
@@ -232,7 +259,7 @@ class AccessContext:
             node = self._credentials.get(current)
             if node is None:
                 break
-            best = max(best, self._own("credential", current, node))
+            best = max(best, self._own("credential", current, node), self._cred_folder_raw(node.folder_id))
             current = node.parent_id
             seen += 1
         return best
@@ -246,7 +273,8 @@ class AccessContext:
         if self.is_admin:
             lvl = LEVELS["manage"]
         elif rid is None or rid == ROOT_ID:
-            lvl = self._acl.get((rtype if rtype != "connection" else "folder", ROOT_ID), 0)
+            root = {"connection": "folder", "cred_folder": "credential"}.get(rtype, rtype)
+            lvl = self._acl.get((root, ROOT_ID), 0)
         else:
             key = (rtype, rid)
             if key not in self._memo:
@@ -256,6 +284,8 @@ class AccessContext:
                     self._memo[key] = self._connection_raw(rid)
                 elif rtype == "credential":
                     self._memo[key] = self._credential_raw(rid)
+                elif rtype == "cred_folder":
+                    self._memo[key] = self._cred_folder_raw(rid)
                 else:
                     raise ValueError(rtype)
             lvl = self._memo[key]
@@ -283,6 +313,43 @@ class AccessContext:
     def visible_connection_ids(self) -> set[uuid.UUID]:
         assert self._connections is not None
         return {cid for cid in self._connections if self.can("connection", cid, "view")}
+
+    def visible_cred_folder_ids(self) -> set[uuid.UUID]:
+        """Credential folders the user can view, plus ancestors needed to reach visible credentials."""
+        assert self._cred_folders is not None and self._credentials is not None
+        out = {fid for fid in self._cred_folders if self.can("cred_folder", fid, "view")}
+        needed = {n.folder_id for cid, n in self._credentials.items()
+                  if n.folder_id and self.can("credential", cid, "view")}
+        for fid in list(out) + list(needed):
+            seen = 0
+            cur: uuid.UUID | None = fid
+            while cur is not None and seen < MAX_DEPTH:
+                out.add(cur)
+                cur = self._cred_folders[cur].parent_id if cur in self._cred_folders else None
+                seen += 1
+        return out
+
+    def cred_folder_subtree(self, fid: uuid.UUID) -> set[uuid.UUID]:
+        """The folder and every folder below it."""
+        assert self._cred_folders is not None
+        children: dict[uuid.UUID, list[uuid.UUID]] = {}
+        for cid, n in self._cred_folders.items():
+            if n.parent_id:
+                children.setdefault(n.parent_id, []).append(cid)
+        out: set[uuid.UUID] = set()
+        stack = [fid]
+        while stack:
+            cur = stack.pop()
+            if cur in out:
+                continue
+            out.add(cur)
+            stack.extend(children.get(cur, []))
+        return out
+
+    def credential_folder_of(self, crid: uuid.UUID) -> uuid.UUID | None:
+        assert self._credentials is not None
+        node = self._credentials.get(crid)
+        return node.folder_id if node else None
 
     def visible_folder_ids(self, visible_connections: set[uuid.UUID]) -> set[uuid.UUID]:
         """Folders the user can view, plus ancestors needed to reach visible items."""

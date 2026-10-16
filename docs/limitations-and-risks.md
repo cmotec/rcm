@@ -39,7 +39,7 @@ says what the limitation is, why it exists, and what to do about it.
 | # | Limitation / risk | Mitigation |
 |---|---|---|
 | S1 | The credential-encryption key is in the API's environment. Anyone with root on the Docker host can read it. | Recommended: Docker secrets (`ENCRYPTION_KEYS_FILE`). Key rotation is supported (`python -m app.cli rotate-keys`). Using an HSM/KMS is future work. |
-| S2 | Infisical and OpenBao APIs change between versions. | Providers use stable documented endpoints (Infisical universal-auth + `/api/v3/secrets/raw`, OpenBao/Vault KV v2 + token/AppRole auth). Each provider has a "test connection" endpoint. |
+| S2 | The OpenBao/Vault API changes between versions. | The provider uses stable documented endpoints (KV v1/v2 + token/AppRole auth) and has a "test connection" endpoint. |
 | S3 | Write-back to external secret stores is not implemented. Sync is one-way, external → local. | Local edits to synced fields count as a conflict (see [secret-providers.md](secret-providers.md)). Write-back can be added per provider through the provider interface. |
 | S4 | OIDC back-channel logout is not implemented. Front-channel/RP-initiated logout is. | Sessions also expire through `AUTH_SESSION_IDLE_MINUTES` / `AUTH_SESSION_MAX_HOURS`. |
 
@@ -57,7 +57,7 @@ The repository was built on a Windows machine without Docker. What was verified:
 
 **Not verified here:** the Docker images and Compose files were not built or run. There was
 no live guacd, so actual RDP/VNC rendering was not seen. Real Windows/VNC servers, FTPS against a
-TLS server, Authentik and Infisical/OpenBao instances were not available. Please run the
+TLS server, Authentik and OpenBao instances were not available. Please run the
 checklist in [testing.md](testing.md) in a staging deployment before production.
 
 ## Dependencies

@@ -18,7 +18,7 @@
 Internet/LAN ──TLS──► web (nginx) ──► api ─┬─► PostgreSQL (TLS, verify-full recommended)
                                             ├─► guacd (private network, no published port) ──► RDP/VNC targets
                                             ├─► SSH / SFTP / FTP(S) targets
-                                            └─► IdP, Infisical, OpenBao (TLS)
+                                            └─► IdP, OpenBao (TLS)
 ```
 
 The browser is untrusted. The api is the only component that knows remote credentials and

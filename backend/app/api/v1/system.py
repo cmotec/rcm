@@ -54,7 +54,6 @@ async def info(principal: Principal = Depends(get_principal), settings: Settings
             "api_tokens": settings.API_TOKENS_ENABLED,
             "rdm_import": settings.FEATURE_RDM_IMPORT,
             "secret_sync": settings.SECRET_SYNC_ENABLED,
-            "infisical": settings.INFISICAL_ENABLED,
             "openbao": settings.OPENBAO_ENABLED,
             "rdp_drive": settings.RDP_DRIVE_ENABLED,
             "ssh_guacd_engine": settings.SSH_GUACD_ENGINE_ENABLED,

@@ -52,8 +52,8 @@ export function matches(c: Connection, q: string): boolean {
   const s = q.toLowerCase();
   return (
     c.name.toLowerCase().includes(s) ||
-    (c.hostname ?? '').toLowerCase().includes(s) ||
-    (c.description ?? '').toLowerCase().includes(s) ||
+    (c.resolved?.hostname ?? c.hostname ?? '').toLowerCase().includes(s) ||
+    (c.resolved?.description ?? c.description ?? '').toLowerCase().includes(s) ||
     c.tags.some((t) => t.toLowerCase().includes(s)) ||
     c.protocol === s
   );

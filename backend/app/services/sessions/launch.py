@@ -80,6 +80,7 @@ async def build_launch(
     chosen_credential_id: uuid.UUID | None = None,
     auth_override: AuthOverride | None = None,
     precheck: Callable[[EffectiveConnection], None] | None = None,
+    credential_filter: Callable[[uuid.UUID], bool] | None = None,
     _depth: int = 0,
 ) -> tuple[LaunchConfig, EffectiveConnection]:
     """``precheck`` runs on the resolved values before any slow work (DNS, jump hosts), so questions
@@ -95,8 +96,12 @@ async def build_launch(
         interactive=interactive,
         chosen_credential_id=chosen_credential_id,
         auth_override=auth_override,
+        credential_filter=credential_filter,
     )
     conn = eff.connection
+    if eff.lookup_errors:
+        detail = "; ".join(f"{k}: {v}" for k, v in sorted(eff.lookup_errors.items()))
+        raise ValidationFailed(f"lookup failed for '{conn.name}': {detail}", code="lookup_failed")
     if conn.protocol not in LAUNCHABLE:
         raise ValidationFailed("this entry is a host container and cannot be opened")
     if eff.hostname is None:
@@ -142,7 +147,7 @@ async def build_launch(
         if jump_id == conn.id:
             raise ValidationFailed("a connection cannot be its own jump host")
         jump, _ = await build_launch(
-            db, jump_id, settings=settings, runtime=runtime, box=box, _depth=_depth + 1
+            db, jump_id, settings=settings, runtime=runtime, box=box, credential_filter=credential_filter, _depth=_depth + 1
         )
         if jump.protocol != "ssh":
             raise ValidationFailed("jump host must be an SSH connection")
@@ -151,7 +156,7 @@ async def build_launch(
     tunnel = getattr(proto_settings, "ssh_tunnel", None)
     if tunnel is not None:
         via, _ = await build_launch(
-            db, tunnel.via_connection_id, settings=settings, runtime=runtime, box=box, _depth=_depth + 1
+            db, tunnel.via_connection_id, settings=settings, runtime=runtime, box=box, credential_filter=credential_filter, _depth=_depth + 1
         )
         if via.protocol != "ssh":
             raise ValidationFailed("SSH tunnel endpoint must be an SSH connection")

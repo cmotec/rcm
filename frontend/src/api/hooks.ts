@@ -1,11 +1,12 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { get } from './client';
-import type { Credential, EffectiveConnection, Me, Page, Tree } from './types';
+import type { Credential, CredentialFolder, EffectiveConnection, Me, Page, Tree } from './types';
 
 export const keys = {
   me: ['me'] as const,
   tree: ['tree'] as const,
   credentials: ['credentials'] as const,
+  credentialFolders: ['credential-folders'] as const,
   effective: (id: string) => ['effective', id] as const,
 };
 
@@ -26,6 +27,42 @@ export function useCredentials(enabled = true) {
   });
 }
 
+export function useCredentialFolders(enabled = true) {
+  return useQuery({
+    queryKey: keys.credentialFolders,
+    queryFn: () => get<CredentialFolder[]>('/api/v1/credential-folders'),
+    enabled,
+    staleTime: 15_000,
+  });
+}
+
+/** The folder and every folder below it. */
+export function folderSubtree(folders: CredentialFolder[], rootId: string): Set<string> {
+  const out = new Set<string>([rootId]);
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const f of folders) {
+      if (f.parent_id && out.has(f.parent_id) && !out.has(f.id)) {
+        out.add(f.id);
+        grew = true;
+      }
+    }
+  }
+  return out;
+}
+
+/** "Parent / Child / Folder" for a credential folder. */
+export function folderPath(folders: CredentialFolder[], id: string | null): string {
+  const byId = new Map(folders.map((f) => [f.id, f]));
+  const parts: string[] = [];
+  for (let f = id ? byId.get(id) : undefined, i = 0; f && i < 64; i++) {
+    parts.unshift(f.name);
+    f = f.parent_id ? byId.get(f.parent_id) : undefined;
+  }
+  return parts.join(' / ');
+}
+
 export function useEffective(id: string | null) {
   return useQuery({
     queryKey: keys.effective(id ?? ''),
@@ -41,7 +78,10 @@ export function useInvalidate() {
       void qc.invalidateQueries({ queryKey: keys.tree });
       void qc.invalidateQueries({ queryKey: ['effective'] });
     },
-    credentials: () => void qc.invalidateQueries({ queryKey: keys.credentials }),
+    credentials: () => {
+      void qc.invalidateQueries({ queryKey: keys.credentials });
+      void qc.invalidateQueries({ queryKey: keys.credentialFolders });
+    },
     all: () => void qc.invalidateQueries(),
   };
 }

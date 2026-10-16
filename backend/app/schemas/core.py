@@ -220,6 +220,17 @@ class ConnectionFields(Strict):
     tags: list[str] | None = Field(None, max_length=50)
     settings: dict[str, Any] | None = None
     sort_order: int | None = None
+    lookups: dict[str, str] | None = Field(
+        None, description="field -> {{lookup:<credential name pattern>:<field>}} (see docs/architecture.md)")
+    credential_folder_id: uuid.UUID | None = Field(
+        None, description="auth_mode credential without credential_id: offer only credentials from this folder")
+
+    @field_validator("lookups")
+    @classmethod
+    def _lookups(cls, v: dict[str, str] | None) -> dict[str, str] | None:
+        from app.services.lookups import validate_lookups
+
+        return None if v is None else validate_lookups(v)
 
     @field_validator("tags")
     @classmethod
@@ -293,6 +304,10 @@ class ConnectionOut(Out):
     permission: str | None = None
     favorite: bool = False
     warnings: list[SecurityWarning] = []
+    lookups: dict[str, str] = {}
+    credential_folder_id: uuid.UUID | None = None
+    # display values of lookup fields (hostname, port, description, …), resolved for the caller
+    resolved: dict[str, Any] = {}
 
 
 class TreeOut(BaseModel):
@@ -301,6 +316,20 @@ class TreeOut(BaseModel):
 
 
 # --------------------------------------------------------------------------- credentials
+
+
+def _check_attributes(v: dict[str, str | None]) -> dict[str, str | None]:
+    if len(v) > 100:
+        raise ValueError("at most 100 attributes")
+    out: dict[str, str | None] = {}
+    for k, val in v.items():
+        key = k.strip()
+        if not key or len(key) > 59 or not all(ch.isalnum() or ch in "_-." for ch in key):
+            raise ValueError(f"attribute name '{k}': 1-59 characters, letters, digits, '_', '-', '.'")
+        if val is not None and len(str(val)) > 8000:
+            raise ValueError(f"attribute '{key}' is too long (max 8000 characters)")
+        out[key] = None if val is None else str(val)
+    return out
 
 
 class CredentialFields(Strict):
@@ -312,6 +341,23 @@ class CredentialFields(Strict):
     description: str | None = Field(None, max_length=20000)
     metadata: dict[str, Any] | None = None
     rotation_interval_days: int | None = Field(None, ge=1, le=3650)
+    folder_id: uuid.UUID | None = None
+    attributes: dict[str, str] | None = Field(
+        None, description="values for lookups (port, hostname, description, …), encrypted at rest, shown to "
+                          "viewers; replaces all attributes")
+    secret_attributes: dict[str, str | None] | None = Field(
+        None, description="write-only values for lookups (encrypted, never returned): a value sets, null removes; "
+                          "names not listed stay unchanged")
+
+    @field_validator("attributes")
+    @classmethod
+    def _attributes(cls, v: dict[str, str] | None) -> dict[str, str] | None:
+        return None if v is None else {k: val for k, val in _check_attributes(v).items() if val is not None}
+
+    @field_validator("secret_attributes")
+    @classmethod
+    def _secret_attributes(cls, v: dict[str, str | None] | None) -> dict[str, str | None] | None:
+        return None if v is None else _check_attributes(v)
 
     @field_validator("metadata")
     @classmethod
@@ -356,6 +402,34 @@ class CredentialOut(Out):
     permission: str | None = None
     external_fields: list[str] = []
     usage_count: int = 0
+    folder_id: uuid.UUID | None = None
+    attributes: dict[str, str] = {}
+    secret_attribute_names: list[str] = []
+
+
+class CredentialFolderCreate(Strict):
+    name: str = Field(min_length=1, max_length=255)
+    parent_id: uuid.UUID | None = None
+    description: str | None = Field(None, max_length=10000)
+
+
+class CredentialFolderUpdate(Strict):
+    name: str | None = Field(None, min_length=1, max_length=255)
+    parent_id: uuid.UUID | None = None
+    description: str | None = Field(None, max_length=10000)
+    version: int | None = None
+
+
+class CredentialFolderOut(Out):
+    id: uuid.UUID
+    name: str
+    parent_id: uuid.UUID | None
+    description: str | None
+    owner_id: uuid.UUID | None
+    version: int
+    created_at: datetime
+    updated_at: datetime
+    permission: str | None = None
 
 
 class CredentialSecrets(BaseModel):
@@ -364,11 +438,12 @@ class CredentialSecrets(BaseModel):
     password: str | None
     private_key: str | None
     passphrase: str | None
+    secret_attributes: dict[str, str] | None = None
 
 
 class CredentialReveal(Strict):
     reason: str | None = Field(None, max_length=500)
-    fields: list[Literal["password", "private_key", "passphrase"]] = ["password"]
+    fields: list[Literal["password", "private_key", "passphrase", "secret_attributes"]] = ["password"]
 
 
 # --------------------------------------------------------------------------- ACL

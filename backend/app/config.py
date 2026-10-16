@@ -19,7 +19,6 @@ SECRET_SETTINGS = (
     "ENCRYPTION_KEYS",
     "OIDC_CLIENT_SECRET",
     "LOCAL_ADMIN_PASSWORD",
-    "INFISICAL_CLIENT_SECRET",
     "OPENBAO_TOKEN",
     "OPENBAO_SECRET_ID",
 )
@@ -152,12 +151,6 @@ class Settings(BaseSettings):
     # --- external secret providers ------------------------------------------
     SECRET_SYNC_ENABLED: bool = True
     SECRET_SYNC_DEFAULT_INTERVAL_SECONDS: int = 900
-    INFISICAL_ENABLED: bool = True
-    INFISICAL_URL: str | None = None
-    INFISICAL_CLIENT_ID: str | None = None
-    INFISICAL_CLIENT_SECRET: str | None = None
-    INFISICAL_PROJECT_ID: str | None = None
-    INFISICAL_ENVIRONMENT: str | None = None
     OPENBAO_ENABLED: bool = True
     OPENBAO_URL: str | None = None
     OPENBAO_NAMESPACE: str | None = None
@@ -166,6 +159,9 @@ class Settings(BaseSettings):
     OPENBAO_ROLE_ID: str | None = None
     OPENBAO_SECRET_ID: str | None = None
     OPENBAO_KV_MOUNT: str = "secret"
+    # every secret below OPENBAO_IMPORT_PATH becomes a credential entry (named after the secret)
+    OPENBAO_AUTO_IMPORT: bool = False
+    OPENBAO_IMPORT_PATH: str = ""
 
     # --- limits & features -----------------------------------------------------
     RATE_LIMIT_LOGIN_PER_MINUTE: int = 10
