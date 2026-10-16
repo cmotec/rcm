@@ -162,6 +162,8 @@ class Settings(BaseSettings):
     # every secret below OPENBAO_IMPORT_PATH becomes a credential entry (named after the secret)
     OPENBAO_AUTO_IMPORT: bool = False
     OPENBAO_IMPORT_PATH: str = ""
+    # secrets left out of the import, comma separated patterns (* = any text), e.g. "test/*,*_old"
+    OPENBAO_IMPORT_EXCLUDE: str = ""
 
     # --- limits & features -----------------------------------------------------
     RATE_LIMIT_LOGIN_PER_MINUTE: int = 10

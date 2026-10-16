@@ -76,3 +76,15 @@ def test_secret_name_is_the_username_until_the_secret_has_one() -> None:
     named = m.Credential(id=_uuid.uuid4(), name="db", username="postgres", meta={}, version=1)
     asyncio.run(_username_from_secret_name(named, "db", False, False, stats))
     assert named.username == "postgres" and USERNAME_FROM_NAME not in named.meta
+
+
+def test_excluded_secrets_match_path_or_name() -> None:
+    from app.services.secrets.discovery import exclusion_matcher
+
+    excluded = exclusion_matcher("test/*\n*_OLD\n# a comment\n\n/legacy/web01/")
+    assert excluded("test/web01") and excluded("test/deep/web02")       # path below the mount
+    assert excluded("dmz/db_old") and excluded("db_old")                 # secret name, case-insensitive
+    assert excluded("legacy/web01")                                      # exact path, slashes ignored
+    assert not excluded("prod/web01") and not excluded("testing/web01") and not excluded("a comment")
+    assert not exclusion_matcher(None)("anything") and not exclusion_matcher([])("anything")
+    assert exclusion_matcher(["infra/*"])("infra/x")                     # list form (provider config)

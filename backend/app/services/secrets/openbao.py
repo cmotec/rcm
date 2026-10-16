@@ -24,6 +24,8 @@ class OpenBaoConfig(BaseModel):
     import_path: str = ""
     # credential folder that mirrors the OpenBao paths of imported secrets (None = top level)
     import_folder_id: str | None = None
+    # secrets left out of the import: one pattern per entry, * = any text, path below the mount or name
+    exclude: list[str] = []
 
 
 class OpenBaoSecrets(BaseModel):

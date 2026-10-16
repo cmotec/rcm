@@ -15,6 +15,10 @@ provider is walked from ``import_path``:
 * the matching keys become secret mappings, and the normal sync then fills in the values;
 * a secret without a username key: the secret's name becomes the credential's username (replaced by a
   username key added later);
+* excluded secrets (provider setting ``exclude``: one pattern per line, ``*`` = any text, matched
+  case-insensitively against the path below the mount or the secret's name) are left out completely:
+  credentials the import created for them are deleted when nothing uses them, otherwise only their
+  link to the provider is removed;
 * folders: the secret's path below ``import_path`` is mirrored as credential folders below the
   provider's ``import_folder_id`` (or at the top level).
 
@@ -31,12 +35,13 @@ import uuid
 from collections import deque
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import models as m
 from app.logging import get_logger
 from app.services.credential_folders import ensure_folder_path
+from app.services.lookups import name_matcher
 from app.services.secrets.base import SecretProviderClient
 
 log = get_logger(__name__)
@@ -118,6 +123,46 @@ async def _username_from_secret_name(cred: m.Credential, secret_name: str, has_u
         stats["usernames_from_name"] = stats.get("usernames_from_name", 0) + 1
 
 
+def exclusion_matcher(patterns: list[str] | str | None):  # noqa: ANN201
+    """A predicate for secret paths: True if a pattern matches the path or the secret's name."""
+    lines = patterns.splitlines() if isinstance(patterns, str) else list(patterns or [])
+    rxs = [name_matcher(p.strip().strip("/")) for p in lines if p.strip() and not p.strip().startswith("#")]
+
+    def excluded(path: str) -> bool:
+        name = path.rsplit("/", 1)[-1]
+        return any(rx.match(path) or rx.match(name) for rx in rxs)
+
+    return excluded
+
+
+async def _drop_excluded(db: AsyncSession, provider: m.SecretProvider, path: str,
+                         mappings: list[m.SecretMapping], stats: dict[str, int]) -> None:
+    """An excluded secret: remove its mappings; delete the credential the import created for it if unused."""
+    linked = [mp for mp in mappings if _norm(str((mp.external_ref or {}).get("path", ""))) == path]
+    for cred_id in {mp.credential_id for mp in linked}:
+        for mp in linked:
+            if mp.credential_id == cred_id:
+                await db.delete(mp)
+        await db.flush()
+        cred = await db.get(m.Credential, cred_id)
+        if cred is None:
+            continue
+        meta = cred.meta or {}
+        created_here = meta.get("imported_from") == provider.name and _norm(str(meta.get("external_path", ""))) == path
+        in_use = (await db.execute(select(func.count()).select_from(m.Connection)
+                                   .where(m.Connection.credential_id == cred_id))).scalar_one() \
+            or (await db.execute(select(func.count()).select_from(m.Credential)
+                                 .where(m.Credential.parent_id == cred_id))).scalar_one() \
+            or (await db.execute(select(func.count()).select_from(m.SecretMapping)
+                                 .where(m.SecretMapping.credential_id == cred_id))).scalar_one()
+        if created_here and not in_use:
+            await db.delete(cred)
+            stats["removed"] = stats.get("removed", 0) + 1
+        else:
+            stats["unlinked"] = stats.get("unlinked", 0) + 1
+    await db.flush()
+
+
 def _norm(path: str) -> str:
     return path.strip().strip("/")
 
@@ -153,8 +198,9 @@ async def discover(db: AsyncSession, client: SecretProviderClient, provider: m.S
                    *, actor_id: uuid.UUID | None) -> dict[str, int]:
     """Create or link credentials for the provider's secrets; returns counters for the sync run."""
     config: dict[str, Any] = provider.config or {}
-    stats = {"discovered": 0, "created": 0, "linked": 0, "keys_added": 0, "skipped": 0}
+    stats = {"discovered": 0, "created": 0, "linked": 0, "keys_added": 0, "skipped": 0, "excluded": 0}
     import_path = _norm(str(config.get("import_path") or ""))
+    excluded = exclusion_matcher(config.get("exclude"))
     secrets = await _walk(client, import_path)
     target_folder: uuid.UUID | None = None
     if config.get("import_folder_id"):
@@ -173,6 +219,11 @@ async def discover(db: AsyncSession, client: SecretProviderClient, provider: m.S
     linked_creds = {mp.credential_id for mp in mappings}
 
     for path, keys in secrets:
+        if excluded(path):
+            stats["excluded"] += 1
+            await _drop_excluded(db, provider, path, list(mappings), stats)
+            by_path.pop(path, None)
+            continue
         fields = fields_for_keys(keys)
         if not fields:
             stats["skipped"] += 1

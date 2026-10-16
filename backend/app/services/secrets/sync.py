@@ -283,7 +283,9 @@ async def ensure_env_providers(db: AsyncSession, settings: Settings) -> None:
                       {"url": settings.OPENBAO_URL, "namespace": settings.OPENBAO_NAMESPACE,
                        "mount": settings.OPENBAO_KV_MOUNT, "auth_method": settings.OPENBAO_AUTH_METHOD,
                        "auto_import": settings.OPENBAO_AUTO_IMPORT or None,
-                       "import_path": settings.OPENBAO_IMPORT_PATH or None},
+                       "import_path": settings.OPENBAO_IMPORT_PATH or None,
+                       "exclude": [p.strip() for p in settings.OPENBAO_IMPORT_EXCLUDE.split(",") if p.strip()]
+                       or None},
                       {"token": settings.OPENBAO_TOKEN, "role_id": settings.OPENBAO_ROLE_ID,
                        "secret_id": settings.OPENBAO_SECRET_ID}))
     for name, ptype, config, secrets in specs:
