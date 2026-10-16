@@ -45,3 +45,4 @@ networks:
 volumes:
   drives: {}
   recordings: {}
+  web-certs: {}

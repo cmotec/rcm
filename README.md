@@ -80,7 +80,10 @@ docker compose pull && docker compose up -d   # prebuilt images (ghcr.io/cmotec,
 No PostgreSQL yet? `docker-compose.postgres.yml` runs everything including a bundled database:
 `docker compose -f docker-compose.postgres.yml up -d` (set `DB_PASSWORD` in `.env`).
 
-Then open `APP_URL`. Details: [docs/deployment.md](docs/deployment.md).
+Then open `APP_URL`, e.g. `https://rcm.example.com:8443`. HTTPS is always on: a self-signed
+certificate is created on the first start; to use your own, put `tls.crt` (full chain) and
+`tls.key` into the certificate volume and restart `web`. Details:
+[docs/deployment.md](docs/deployment.md) (§5 TLS).
 
 `docker-compose.yml` pulls the images (amd64/arm64), which the workflow in `.github/workflows/`
 publishes to the GitHub Container Registry or a Gitea registry. `docker-compose.dev.yml` builds them

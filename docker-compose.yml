@@ -11,7 +11,8 @@
 #
 # Building from source instead: docker-compose.dev.yml.
 # With a bundled PostgreSQL instead of an external one: docker-compose.postgres.yml.
-# TLS: terminate it at your reverse proxy (docs/deployment.md, "TLS").
+# TLS: built in. HTTPS on HTTPS_PORT (default 8443) with a self-signed certificate, or your own
+# tls.crt + tls.key in the certificate volume/TLS_CERT_DIR (docs/deployment.md, "TLS").
 
 x-hardening: &hardening
   security_opt:
@@ -39,8 +40,20 @@ services:
     environment:
       API_UPSTREAM: api:8000
       CLIENT_MAX_BODY_SIZE: ${CLIENT_MAX_BODY_SIZE:-0}
+      # TLS (always on): own certificate = tls.crt + tls.key in the certificate directory, otherwise a
+      # self-signed one for the APP_URL host name is created there (docs/deployment.md, "TLS").
+      APP_URL: ${APP_URL:-}
+      TLS_SELF_SIGNED_NAME: ${TLS_SELF_SIGNED_NAME:-}
+      # redirect: HTTP -> HTTPS. serve: plain HTTP on HTTP_PORT for a TLS-terminating reverse proxy.
+      HTTP_MODE: ${HTTP_MODE:-redirect}
+      PUBLIC_HTTPS_PORT: ${HTTPS_PORT:-8443}
     ports:
       - "${HTTP_BIND:-0.0.0.0}:${HTTP_PORT:-8080}:8080"
+      - "${HTTP_BIND:-0.0.0.0}:${HTTPS_PORT:-8443}:8443"
+    volumes:
+      # a named volume by default; set TLS_CERT_DIR to a host directory (e.g. /srv/rcm/certs) to manage
+      # the certificate files there
+      - ${TLS_CERT_DIR:-web-certs}:/etc/nginx/certs
     depends_on:
       api:
         condition: service_healthy
@@ -100,3 +113,4 @@ networks:
 volumes:
   drives: {}
   recordings: {}
+  web-certs: {}
