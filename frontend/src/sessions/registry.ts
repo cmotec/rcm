@@ -180,6 +180,53 @@ export async function closeSessionById(id: string): Promise<void> {
   await ctrl?.close();
 }
 
+/**
+ * Hand a session over to another browser window: drop it here (layout and local connection) without
+ * ending it on the server, so the other window can attach to it.
+ */
+export function releaseSession(id: string): void {
+  const ctrl = controllers.get(id);
+  controllers.delete(id);
+  useWorkspace.getState().update((l) => closeInLayout(l, id));
+  useWorkspace.getState().forgetSession(id);
+  ctrl?.dispose();
+}
+
+/** Show an existing server session in this window (the "new window" page attaches to it). */
+export function adoptSession(info: SessionInfo, onGone: () => void): BaseSession {
+  const ctrl = createController({ ...info, ticket: null }); // no ticket: the controller asks for a fresh one
+  controllers.set(info.id, ctrl);
+  ctrl.onEnded = () => {
+    void closeSessionById(info.id);
+    onGone();
+  };
+  useWorkspace.getState().addSession({
+    id: info.id,
+    connectionId: info.connection_id ?? '',
+    name: info.connection_name,
+    protocol: info.protocol,
+    kind: info.kind,
+    host: info.effective_host,
+    warnings: info.warnings,
+  });
+  return ctrl;
+}
+
+/** Open a session in its own browser window (e.g. for a second monitor); the session keeps running. */
+export function openInNewWindow(id: string): void {
+  const ctrl = controllers.get(id);
+  const rect = ctrl?.element.getBoundingClientRect();
+  const w = Math.round(Math.max(640, Math.min(window.screen.availWidth, rect?.width ?? 1280)));
+  const h = Math.round(Math.max(400, Math.min(window.screen.availHeight, (rect?.height ?? 800) + 40)));
+  const win = window.open(`/popup/session/${encodeURIComponent(id)}`, `session-${id}`,
+    `popup=yes,width=${w},height=${h}`);
+  if (!win) {
+    dialogs.toast('The browser blocked the new window. Allow pop-ups for this site and try again.', 'warning');
+    return;
+  }
+  releaseSession(id);
+}
+
 export async function disconnectAll(): Promise<void> {
   const ids = [...controllers.keys()];
   if (!ids.length) return;
