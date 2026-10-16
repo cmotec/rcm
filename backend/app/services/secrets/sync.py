@@ -34,6 +34,12 @@ from app.logging import get_logger
 from app.security.crypto import aad_for, fingerprint, get_box
 from app.services import audit
 from app.services.auth import now
+from app.services.credential_attributes import (
+    get_attributes,
+    get_secret_attributes,
+    set_attributes,
+    set_secret_attributes,
+)
 from app.services.secrets.base import ProviderError, SecretProviderClient, SecretRef
 from app.services.secrets.discovery import discover
 from app.services.secrets.openbao import OpenBaoClient
@@ -69,9 +75,20 @@ def build_client(p: m.SecretProvider, settings: Settings) -> SecretProviderClien
         raise ValidationFailed(f"invalid provider configuration: {exc}") from exc
 
 
-def _read_field(cred: m.Credential, field: str) -> str | None:
+def _attr_target(field: str) -> tuple[str, str] | None:
+    """("attributes" | "secret_attributes", name) for attribute mappings."""
     if field.startswith(m.ATTRIBUTE_FIELD_PREFIX):
-        v = (cred.attributes or {}).get(field[len(m.ATTRIBUTE_FIELD_PREFIX):])
+        return "attributes", field[len(m.ATTRIBUTE_FIELD_PREFIX):]
+    if field.startswith(m.SECRET_ATTRIBUTE_FIELD_PREFIX):
+        return "secret_attributes", field[len(m.SECRET_ATTRIBUTE_FIELD_PREFIX):]
+    return None
+
+
+def _read_field(cred: m.Credential, field: str) -> str | None:
+    target = _attr_target(field)
+    if target:
+        values = get_attributes(cred) if target[0] == "attributes" else get_secret_attributes(cred)
+        v = values.get(target[1])
         return None if v in (None, "") else str(v)
     if field in ("username", "domain"):
         return getattr(cred, field)
@@ -80,14 +97,19 @@ def _read_field(cred: m.Credential, field: str) -> str | None:
 
 
 def _write_field(cred: m.Credential, field: str, value: str | None) -> None:
-    if field.startswith(m.ATTRIBUTE_FIELD_PREFIX):
-        attrs = dict(cred.attributes or {})
-        name = field[len(m.ATTRIBUTE_FIELD_PREFIX):]
+    target = _attr_target(field)
+    if target:
+        column, name = target
+        values = get_attributes(cred) if column == "attributes" else get_secret_attributes(cred)
         if value in (None, ""):
-            attrs.pop(name, None)
+            values.pop(name, None)
         else:
-            attrs[name] = value
-        cred.attributes = attrs  # new dict: JSONB change tracking
+            values[name] = value
+        if column == "attributes":
+            set_attributes(cred, values)
+        else:
+            set_secret_attributes(cred, values)
+            cred.secret_changed_at = now()
         cred.version += 1
         return
     if field in ("username", "domain"):

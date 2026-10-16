@@ -162,8 +162,10 @@ export interface Credential {
   external_fields: string[];
   usage_count: number;
   folder_id: string | null;
-  /** non-secret values for lookups (port, hostname, description, …) */
+  /** values for lookups (port, hostname, description, …), encrypted at rest, shown to viewers */
   attributes: Record<string, string>;
+  /** names of the write-only secret attributes (values are never returned) */
+  secret_attribute_names: string[];
 }
 
 export interface CredentialFolder {
@@ -182,6 +184,7 @@ export interface CredentialSecrets {
   password: string | null;
   private_key: string | null;
   passphrase: string | null;
+  secret_attributes?: Record<string, string> | null;
 }
 
 export type SessionKind = 'guac' | 'terminal' | 'files';

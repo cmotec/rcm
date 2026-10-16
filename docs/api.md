@@ -57,7 +57,7 @@ The complete, generated specification is in [openapi.json](openapi.json)
 | GET/PATCH/DELETE | `/credentials/{id}` | metadata / update (write-only secrets; `null` clears) / delete |
 | POST | `/credentials/{id}/reveal` | reveal selected secret fields (needs `credentials.reveal` + manage; audited) |
 | GET | `/credentials/{id}/usage` | referencing connections and child credentials |
-| GET/PUT | `/credentials/{id}/mappings` | external secret mappings per field (`attr:<name>` fills an attribute) |
+| GET/PUT | `/credentials/{id}/mappings` | external secret mappings per field (`attr:<name>` fills an attribute, `secret:<name>` a secret attribute) |
 | GET/POST | `/credential-folders` | credential folders visible to the caller / create |
 | PATCH/DELETE | `/credential-folders/{id}` | rename, move / delete (`move_contents=true` moves credentials and sub-folders up; nothing is deleted with the folder) |
 | POST | `/secret-mappings/{id}/resolve` | resolve a sync conflict (`accept_remote` / `keep_local`) |

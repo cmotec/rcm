@@ -6188,7 +6188,29 @@
               }
             ],
             "title": "Attributes",
-            "description": "non-secret values for lookups (port, hostname, description, \u2026); stored unencrypted"
+            "description": "values for lookups (port, hostname, description, \u2026), encrypted at rest, shown to viewers; replaces all attributes"
+          },
+          "secret_attributes": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Secret Attributes",
+            "description": "write-only values for lookups (encrypted, never returned): a value sets, null removes; names not listed stay unchanged"
           },
           "name": {
             "type": "string",
@@ -6577,6 +6599,14 @@
             "type": "object",
             "title": "Attributes",
             "default": {}
+          },
+          "secret_attribute_names": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Secret Attribute Names",
+            "default": []
           }
         },
         "type": "object",
@@ -6620,7 +6650,8 @@
               "enum": [
                 "password",
                 "private_key",
-                "passphrase"
+                "passphrase",
+                "secret_attributes"
               ]
             },
             "type": "array",
@@ -6690,6 +6721,20 @@
               }
             ],
             "title": "Passphrase"
+          },
+          "secret_attributes": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Secret Attributes"
           }
         },
         "type": "object",
@@ -6829,7 +6874,29 @@
               }
             ],
             "title": "Attributes",
-            "description": "non-secret values for lookups (port, hostname, description, \u2026); stored unencrypted"
+            "description": "values for lookups (port, hostname, description, \u2026), encrypted at rest, shown to viewers; replaces all attributes"
+          },
+          "secret_attributes": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Secret Attributes",
+            "description": "write-only values for lookups (encrypted, never returned): a value sets, null removes; names not listed stay unchanged"
           },
           "name": {
             "anyOf": [
@@ -7716,7 +7783,7 @@
           "field": {
             "type": "string",
             "title": "Field",
-            "description": "username, password, domain, private_key, passphrase, or attr:<name>"
+            "description": "username, password, domain, private_key, passphrase, attr:<name> or secret:<name>"
           },
           "provider_id": {
             "type": "string",

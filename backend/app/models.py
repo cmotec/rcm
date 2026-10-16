@@ -48,8 +48,10 @@ PERMISSIONS = ("view", "connect", "edit", "manage")
 RESOURCE_TYPES = ("folder", "connection", "credential", "cred_folder")
 PRINCIPAL_TYPES = ("user", "group", "role")
 SECRET_FIELDS = ("username", "password", "domain", "private_key", "passphrase")
-#: Secret mappings may also fill a credential attribute: field "attr:<name>" (e.g. attr:port).
+#: Secret mappings may also fill a credential attribute: field "attr:<name>" (e.g. attr:port),
+#: or a secret attribute: "secret:<name>" (write-only, like a password).
 ATTRIBUTE_FIELD_PREFIX = "attr:"
+SECRET_ATTRIBUTE_FIELD_PREFIX = "secret:"
 
 
 def _in(column: str, values: tuple[str, ...]) -> str:
@@ -311,8 +313,11 @@ class Credential(TimestampMixin, Base):
     description: Mapped[str | None] = mapped_column(Text)
     meta: Mapped[dict[str, Any]] = mapped_column("metadata", JSONB, default=dict, server_default="{}")
     folder_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("credential_folders.id", ondelete="RESTRICT"))
-    # non-secret values connections can take over through lookups (port, hostname, description, …)
-    attributes: Mapped[dict[str, str]] = mapped_column(JSONB, default=dict, server_default="{}")
+    # Values connections can take over through lookups, both encrypted at rest (JSON objects, see
+    # services/credential_attributes.py): attributes are shown to viewers (port, hostname, description,
+    # …); secret attributes are write-only like the password and only reach sessions.
+    attributes_enc: Mapped[bytes | None] = mapped_column(LargeBinary)
+    secret_attributes_enc: Mapped[bytes | None] = mapped_column(LargeBinary)
     owner_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     rotation_interval_days: Mapped[int | None] = mapped_column(Integer)
     secret_changed_at: Mapped[datetime | None]
@@ -385,7 +390,8 @@ class SecretMapping(TimestampMixin, Base):
 
     __tablename__ = "secret_mappings"
     __table_args__ = (
-        CheckConstraint(f"{_in('field', SECRET_FIELDS)} OR field LIKE 'attr:%'", name="field"),
+        CheckConstraint(f"{_in('field', SECRET_FIELDS)} OR field LIKE 'attr:%' OR field LIKE 'secret:%'",
+                        name="field"),
         CheckConstraint(
             _in("conflict_policy", ("manual", "prefer_remote", "prefer_local")), name="conflict_policy"
         ),

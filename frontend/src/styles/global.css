@@ -549,3 +549,5 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; user-sel
   .page-head .search { max-width: none; flex-basis: 100%; order: 3; }
   .page-head h1 { font-size: 17px; }
 }
+
+.attr-row .secret-stored { flex: 1; min-width: 0; }

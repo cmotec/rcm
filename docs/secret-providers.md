@@ -45,11 +45,12 @@ provider from environment variables), every full sync walks the KV mount, or onl
 
   A secret with a single key that matches none of these, for example a key without a name, is
   taken as the password. Secrets without any usable key are skipped.
-* every **other key** becomes a credential **attribute** (`attr:<key>`): non-secret values such as
-  `port`, `description` or `hostname` that connections read with lookups, e.g.
-  `{{lookup:{hostname}_root:port}}`. Attributes are stored **unencrypted**, so keys whose name looks
-  secret (containing token, secret, key, pass, pin, cert, private, auth, …) are not imported as
-  attributes.
+* every **other key** becomes a credential **attribute** (`attr:<key>`): values such as `port`,
+  `description` or `hostname` that connections read with lookups, e.g. `{{lookup:{hostname}_root:port}}`.
+  Attributes are encrypted at rest and visible to everyone who may view the credential.
+* keys whose name looks secret (containing token, secret, key, pass, pin, cert, private, auth, …)
+  become **secret attributes** (`secret:<key>`): encrypted, write-only like the password, never shown,
+  used only by sessions through lookups (and viewable with the audited *Reveal*).
 * **folders:** choose a credential folder in the provider settings; the secret's path below
   *import path* is mirrored as sub-folders there (`infrastructure/dmz/web01` → `<folder>/dmz/web01`).
   Without a folder, the structure starts at the top level. Only newly created credentials are placed;

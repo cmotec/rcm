@@ -27,6 +27,13 @@ from app.security.crypto import aad_for, fingerprint, get_box
 from app.services import audit
 from app.services.auth import now
 from app.services.authz import LEVEL_NAMES, AccessContext, Perm
+from app.services.credential_attributes import (
+    get_attributes,
+    get_secret_attributes,
+    secret_attribute_names,
+    set_attributes,
+    set_secret_attributes,
+)
 from app.services.resolution import would_create_cycle
 
 router = APIRouter(prefix="/credentials", tags=["credentials"])
@@ -62,7 +69,7 @@ async def credential_out(db: AsyncSession, c: m.Credential, access: AccessContex
         rotation_due=rotation_due, version=c.version, created_at=c.created_at, updated_at=c.updated_at,
         permission=LEVEL_NAMES.get(access.level_of("credential", c.id)) or None,
         external_fields=sorted(mapped), usage_count=usage,
-        folder_id=c.folder_id, attributes=dict(c.attributes or {}),
+        folder_id=c.folder_id, attributes=get_attributes(c), secret_attribute_names=secret_attribute_names(c),
     )
 
 
@@ -105,7 +112,10 @@ def _refresh_key_fingerprint(cred: m.Credential) -> None:
 def local_hash(cred: m.Credential, fname: str) -> str | None:
     """Fingerprint of a field's current value, for secret-sync conflict detection."""
     if fname.startswith(m.ATTRIBUTE_FIELD_PREFIX):
-        v = (cred.attributes or {}).get(fname[len(m.ATTRIBUTE_FIELD_PREFIX):])
+        v = get_attributes(cred).get(fname[len(m.ATTRIBUTE_FIELD_PREFIX):])
+        return fingerprint(str(v)) if v not in (None, "") else None
+    if fname.startswith(m.SECRET_ATTRIBUTE_FIELD_PREFIX):
+        v = get_secret_attributes(cred).get(fname[len(m.SECRET_ATTRIBUTE_FIELD_PREFIX):])
         return fingerprint(str(v)) if v not in (None, "") else None
     if fname in ("username", "domain"):
         v = getattr(cred, fname)
@@ -149,13 +159,15 @@ async def create_credential(body: CredentialCreate, request: Request, principal:
     cred = m.Credential(id=uuid.uuid4(), name=body.name, parent_id=body.parent_id, username=body.username,
                         domain=body.domain, description=body.description, meta=body.metadata or {},
                         owner_id=principal.id, rotation_interval_days=body.rotation_interval_days,
-                        folder_id=body.folder_id, attributes=body.attributes or {})
+                        folder_id=body.folder_id)
+    set_attributes(cred, body.attributes or {})
+    set_secret_attributes(cred, {k: v for k, v in (body.secret_attributes or {}).items() if v})
     for f in SECRET_FIELDS:
         _set_secret(cred, f, getattr(body, f))
     if body.private_key and _key_fingerprint(body.private_key, body.passphrase) is None:
         raise ValidationFailed("private key could not be parsed (wrong passphrase or unsupported format)",
                                code="private_key_invalid")
-    if any(getattr(body, f) for f in SECRET_FIELDS):
+    if any(getattr(body, f) for f in SECRET_FIELDS) or body.secret_attributes:
         cred.secret_changed_at = now()
     _refresh_key_fingerprint(cred)
     db.add(cred)
@@ -194,7 +206,16 @@ async def update_credential(credential_id: uuid.UUID, body: CredentialUpdate,
         await check_folder_target(db, access, body.folder_id)
         cred.folder_id = body.folder_id
     if "attributes" in fields:
-        cred.attributes = body.attributes or {}
+        set_attributes(cred, body.attributes or {})
+    if "secret_attributes" in fields and body.secret_attributes:
+        current = get_secret_attributes(cred)
+        for k, v in body.secret_attributes.items():
+            if v:
+                current[k] = v
+            else:
+                current.pop(k, None)
+        set_secret_attributes(cred, current)
+        cred.secret_changed_at = now()
     if "name" in fields and body.name:
         cred.name = body.name
     for f in ("username", "domain", "description", "rotation_interval_days"):
@@ -263,10 +284,11 @@ async def reveal_credential(credential_id: uuid.UUID, body: CredentialReveal,
         f: (box.decrypt(getattr(cred, f"{f}_enc"), aad_for("credentials", f, cred.id)) if f in body.fields else None)
         for f in SECRET_FIELDS
     }
+    secret_attrs = get_secret_attributes(cred, box) if "secret_attributes" in body.fields else None
     await audit.record(db, "credential.reveal", actor_id=principal.id, actor_name=principal.name,
                        resource_type="credential", resource_id=cred.id,
                        details={"fields": body.fields, "reason": body.reason})
-    return CredentialSecrets(username=cred.username, domain=cred.domain, **values)
+    return CredentialSecrets(username=cred.username, domain=cred.domain, secret_attributes=secret_attrs, **values)
 
 
 @router.get("/{credential_id}/usage", summary="Connections and credentials that reference this credential")

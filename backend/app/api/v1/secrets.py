@@ -69,19 +69,20 @@ class ProviderOut(BaseModel):
     conflict_count: int = 0
 
 
-_ATTR_FIELD = re.compile(r"^attr:[A-Za-z0-9_.\-]{1,59}$")
+_ATTR_FIELD = re.compile(r"^(attr|secret):[A-Za-z0-9_.\-]{1,59}$")
 
 
 def check_mapping_field(v: str) -> str:
-    """A credential field, or a credential attribute as attr:<name>."""
+    """A credential field, an attribute (attr:<name>) or a secret attribute (secret:<name>)."""
     if v in m.SECRET_FIELDS or _ATTR_FIELD.match(v):
         return v
-    raise ValueError(f"field must be one of {', '.join(m.SECRET_FIELDS)} or attr:<name>")
+    raise ValueError(f"field must be one of {', '.join(m.SECRET_FIELDS)}, attr:<name> or secret:<name>")
 
 
 class MappingIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    field: str = Field(description="username, password, domain, private_key, passphrase, or attr:<name>")
+    field: str = Field(description="username, password, domain, private_key, passphrase, attr:<name> or "
+                                   "secret:<name>")
 
     @field_validator("field")
     @classmethod

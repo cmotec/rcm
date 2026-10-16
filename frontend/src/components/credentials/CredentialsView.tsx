@@ -1,5 +1,5 @@
 import { Cloud, Eye, Folder, FolderPlus, KeyRound, Layers, Pencil, Plus, Search, Shield, Trash, TriangleAlert } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import { del, errorMessage, get, patch, post, put } from '../../api/client';
 import { folderPath, folderSubtree, hasPerm, useCredentialFolders, useCredentials, useInvalidate, useMe } from '../../api/hooks';
 import type { Credential, CredentialFolder, CredentialSecrets, SecretMapping, SecretProvider } from '../../api/types';
@@ -56,6 +56,10 @@ function CredentialDialog({ credential, all, folders, defaultFolder, onClose }: 
   const [name, setName] = useState(credential?.name ?? '');
   const [folderId, setFolderId] = useState(credential ? credential.folder_id ?? '' : defaultFolder ?? '');
   const [attributes, setAttributes] = useState<[string, string][]>(Object.entries(credential?.attributes ?? {}));
+  // secret attributes: stored names (write-only) and what to change: value = set, null = remove
+  const storedSecretNames = credential?.secret_attribute_names ?? [];
+  const [secretChanges, setSecretChanges] = useState<Record<string, string | null>>({});
+  const [newSecrets, setNewSecrets] = useState<[string, string][]>([]);
   const [username, setUsername] = useState(credential?.username ?? '');
   const [domain, setDomain] = useState(credential?.domain ?? '');
   const [parentId, setParentId] = useState(credential?.parent_id ?? '');
@@ -75,6 +79,11 @@ function CredentialDialog({ credential, all, folders, defaultFolder, onClose }: 
       folder_id: folderId || null,
       attributes: Object.fromEntries(attributes.filter(([k]) => k.trim()).map(([k, v]) => [k.trim(), v])),
     };
+    const secretAttributes: Record<string, string | null> = { ...secretChanges };
+    for (const [k, v] of newSecrets) if (k.trim() && v) secretAttributes[k.trim()] = v;
+    // unchanged stored values: not sent (write-only); an emptied replacement counts as "keep"
+    for (const [k, v] of Object.entries(secretAttributes)) if (v === '') delete secretAttributes[k];
+    if (Object.keys(secretAttributes).length) body.secret_attributes = secretAttributes;
     for (const f of ['password', 'private_key', 'passphrase'] as SecretField[]) {
       if (secrets[f] !== null) body[f] = secrets[f] || null;
     }
@@ -126,8 +135,9 @@ function CredentialDialog({ credential, all, folders, defaultFolder, onClose }: 
           <CredentialFolderSelect folders={folders} value={folderId} onChange={setFolderId} />
         </label>
         <div className="field span2">
-          <span>Attributes <small className="muted">(not secret, stored unencrypted; connections can read them with
-            {' '}<code>{'{{lookup:<name>:<attribute>}}'}</code>, e.g. port, hostname, description)</small></span>
+          <span>Attributes <small className="muted">(encrypted, visible to everyone who may see this credential;
+            connections read them with <code>{'{{lookup:<name>:<attribute>}}'}</code>, e.g. port, hostname,
+            description)</small></span>
           {attributes.map(([k, v], i) => (
             <div key={i} className="row nowrap attr-row">
               <input value={k} placeholder="name, e.g. port" onChange={(e) => setAttributes(attributes.map((a, j) => (j === i ? [e.target.value, a[1]] : a)))} />
@@ -136,6 +146,51 @@ function CredentialDialog({ credential, all, folders, defaultFolder, onClose }: 
             </div>
           ))}
           <div><button type="button" onClick={() => setAttributes([...attributes, ['', '']])}><Plus size={14} /> Add attribute</button></div>
+        </div>
+        <div className="field span2">
+          <span>Secret attributes <small className="muted">(encrypted and write-only like the password: never shown,
+            only used by sessions through lookups, e.g. an API token; viewable with “Reveal”)</small></span>
+          {storedSecretNames.map((name) => {
+            const change = secretChanges[name];
+            const setChange = (v: string | null | undefined) => {
+              const next = { ...secretChanges };
+              if (v === undefined) delete next[name];
+              else next[name] = v;
+              setSecretChanges(next);
+            };
+            return (
+              <div key={name} className="row nowrap attr-row">
+                <input value={name} readOnly className="mono" />
+                {change === undefined ? (
+                  <>
+                    <span className="muted secret-stored">•••••••• stored</span>
+                    <button type="button" onClick={() => setChange('')}>Replace</button>
+                    <button type="button" className="icon-btn danger" title="Remove" onClick={() => setChange(null)}><Trash size={14} /></button>
+                  </>
+                ) : change === null ? (
+                  <>
+                    <span className="muted secret-stored">will be removed</span>
+                    <button type="button" onClick={() => setChange(undefined)}>Keep</button>
+                  </>
+                ) : (
+                  <>
+                    <input type="password" value={change} placeholder="new value" autoComplete="new-password"
+                           onChange={(e) => setChange(e.target.value)} />
+                    <button type="button" onClick={() => setChange(undefined)}>Keep</button>
+                  </>
+                )}
+              </div>
+            );
+          })}
+          {newSecrets.map(([k, v], i) => (
+            <div key={`new-${i}`} className="row nowrap attr-row">
+              <input value={k} placeholder="name, e.g. api_token" onChange={(e) => setNewSecrets(newSecrets.map((a, j) => (j === i ? [e.target.value, a[1]] : a)))} />
+              <input type="password" value={v} placeholder="value" autoComplete="new-password"
+                     onChange={(e) => setNewSecrets(newSecrets.map((a, j) => (j === i ? [a[0], e.target.value] : a)))} />
+              <button type="button" className="icon-btn danger" title="Remove" onClick={() => setNewSecrets(newSecrets.filter((_, j) => j !== i))}><Trash size={14} /></button>
+            </div>
+          ))}
+          <div><button type="button" onClick={() => setNewSecrets([...newSecrets, ['', '']])}><Plus size={14} /> Add secret attribute</button></div>
         </div>
       </div>
     </Modal>
@@ -149,7 +204,7 @@ function RevealDialog({ credential, onClose }: { credential: Credential; onClose
   const reveal = async () => {
     try {
       const fields = [credential.password_set && 'password', credential.private_key_set && 'private_key',
-        credential.passphrase_set && 'passphrase'].filter(Boolean);
+        credential.passphrase_set && 'passphrase', credential.secret_attribute_names?.length && 'secret_attributes'].filter(Boolean);
       setValues(await post<CredentialSecrets>(`/api/v1/credentials/${credential.id}/reveal`, { reason: reason || null, fields }));
     } catch (err) {
       setError(errorMessage(err));
@@ -176,6 +231,9 @@ function RevealDialog({ credential, onClose }: { credential: Credential; onClose
           <dt>Password</dt><dd><input readOnly className="mono" value={values.password ?? ''} onFocus={(e) => e.currentTarget.select()} /></dd>
           {values.private_key && <><dt>Private key</dt><dd><textarea readOnly rows={6} className="mono" value={values.private_key} /></dd></>}
           {values.passphrase && <><dt>Passphrase</dt><dd><input readOnly className="mono" value={values.passphrase} /></dd></>}
+          {Object.entries(values.secret_attributes ?? {}).map(([k, v]) => (
+            <Fragment key={k}><dt className="mono">{k}</dt><dd><input readOnly className="mono" value={v} onFocus={(e) => e.currentTarget.select()} /></dd></Fragment>
+          ))}
         </dl>
       )}
     </Modal>
@@ -245,15 +303,28 @@ function MappingsDialog({ credential, onClose }: { credential: Credential; onClo
             return (
               <tr key={i}>
                 <td data-label="Field">
-                  <select value={d.field.startsWith('attr:') ? 'attr:' : d.field}
-                          onChange={(e) => set({ field: e.target.value === 'attr:' ? (d.field.startsWith('attr:') ? d.field : 'attr:') : e.target.value })}>
-                    {['username', 'password', 'domain', 'private_key', 'passphrase'].map((f) => <option key={f}>{f}</option>)}
-                    <option value="attr:">attribute…</option>
-                  </select>
-                  {d.field.startsWith('attr:') && (
-                    <input value={d.field.slice(5)} placeholder="e.g. port" title="Attribute name (letters, digits, _ - .)"
-                           onChange={(e) => set({ field: `attr:${e.target.value.replace(/[^A-Za-z0-9_.-]/g, '')}` })} />
-                  )}
+                  {(() => {
+                    const prefix = d.field.startsWith('attr:') ? 'attr:' : d.field.startsWith('secret:') ? 'secret:' : null;
+                    const attrName = prefix ? d.field.slice(prefix.length) : '';
+                    return (
+                      <>
+                        <select value={prefix ?? d.field}
+                                onChange={(e) => {
+                                  const v = e.target.value;
+                                  set({ field: v === 'attr:' || v === 'secret:' ? `${v}${attrName}` : v });
+                                }}>
+                          {['username', 'password', 'domain', 'private_key', 'passphrase'].map((f) => <option key={f}>{f}</option>)}
+                          <option value="attr:">attribute…</option>
+                          <option value="secret:">secret attribute…</option>
+                        </select>
+                        {prefix && (
+                          <input value={attrName} placeholder={prefix === 'attr:' ? 'e.g. port' : 'e.g. api_token'}
+                                 title="Attribute name (letters, digits, _ - .)"
+                                 onChange={(e) => set({ field: `${prefix}${e.target.value.replace(/[^A-Za-z0-9_.-]/g, '')}` })} />
+                        )}
+                      </>
+                    );
+                  })()}
                 </td>
                 <td data-label="Provider"><select value={d.provider_id} onChange={(e) => set({ provider_id: e.target.value })}>
                   {providers.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
@@ -454,6 +525,9 @@ export function CredentialsView() {
                     <td data-label="Secrets" className="small">
                       {[c.password_set && 'password', c.private_key_set && 'key', c.passphrase_set && 'passphrase'].filter(Boolean).join(', ') || <span className="muted">none</span>}
                       {Object.keys(c.attributes ?? {}).length > 0 && <div className="muted">{Object.keys(c.attributes).join(', ')}</div>}
+                      {(c.secret_attribute_names ?? []).length > 0 && (
+                        <div className="muted" title="secret attributes (values never shown)">🔒 {c.secret_attribute_names.join(', ')}</div>
+                      )}
                       {c.rotation_due && <span className="badge warn">rotation due</span>}
                     </td>
                     <td data-label="Used by">{c.usage_count}</td>

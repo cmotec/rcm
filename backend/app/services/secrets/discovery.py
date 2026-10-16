@@ -9,9 +9,9 @@ provider is walked from ``import_path``:
   ``password``/``pass``/``pwd``, ``domain``, ``private_key``/``ssh_key``, ``passphrase`` and a few
   more; case, ``-``/``_`` and spaces are ignored). A secret with a single key that matches nothing,
   e.g. a key without a name, is taken as the password;
-* every other key becomes a credential attribute (``attr:<key>``, stored unencrypted, readable by
-  lookups such as ``{{lookup:{hostname}_root:port}}``), except keys whose name looks secret
-  (token, secret, key, certificate, …), which are skipped;
+* every other key becomes a credential attribute (``attr:<key>``, encrypted, shown to viewers,
+  readable by lookups such as ``{{lookup:{hostname}_root:port}}``); keys whose name looks secret
+  (token, secret, key, certificate, …) become write-only secret attributes (``secret:<key>``);
 * the matching keys become secret mappings, and the normal sync then fills in the values;
 * folders: the secret's path below ``import_path`` is mirrored as credential folders below the
   provider's ``import_folder_id`` (or at the top level).
@@ -73,21 +73,24 @@ def fields_for_keys(keys: list[str]) -> dict[str, str]:
     return out
 
 
-# Key names that probably hold a secret: never stored as (unencrypted) attributes.
+# Key names that probably hold a secret: imported as write-only secret attributes.
 _SENSITIVE = re.compile(r"(token|secret|key|pass|pwd|pin|cert|private|credential|auth|otp|seed|salt|hash)",
                         re.IGNORECASE)
 _ATTR_NAME = re.compile(r"[^A-Za-z0-9_.\-]+")
 
 
 def attribute_fields(keys: list[str], used: set[str]) -> dict[str, str]:
-    """{"attr:<name>": key} for the keys not used for a credential field (secret-looking keys excluded)."""
+    """{"attr:<name>" or "secret:<name>": key} for the keys not used for a credential field."""
     out: dict[str, str] = {}
     for key in keys:
-        if key in used or not key.strip() or _SENSITIVE.search(key):
+        if key in used or not key.strip():
             continue
         name = _ATTR_NAME.sub("_", key.strip()).strip("_")[:59]
-        if name and f"attr:{name}" not in out:
-            out[f"attr:{name}"] = key
+        if not name:
+            continue
+        field = f"secret:{name}" if _SENSITIVE.search(key) else f"attr:{name}"
+        if field not in out:
+            out[field] = key
     return out
 
 

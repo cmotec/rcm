@@ -12,7 +12,14 @@ from typing import Any
 import pytest
 
 from app import models as m
-from app.security.crypto import Keyring, SecretBox, aad_for
+from app.security.crypto import CryptoError, Keyring, SecretBox, aad_for
+from app.services.credential_attributes import (
+    get_attributes,
+    get_secret_attributes,
+    secret_attribute_names,
+    set_attributes,
+    set_secret_attributes,
+)
 from app.services.lookups import (
     LookupFailed,
     find_credential,
@@ -21,7 +28,7 @@ from app.services.lookups import (
     substitute,
     validate_lookups,
 )
-from app.services.resolution import compute_effective, resolve_lookups
+from app.services.resolution import compute_effective, credential_lookup_value, resolve_lookups
 from app.services.secrets.discovery import attribute_fields
 
 BOX = SecretBox(Keyring.parse("k1:" + base64.b64encode(os.urandom(32)).decode()))
@@ -72,8 +79,9 @@ def _conn(name: str, **kw: Any) -> m.Connection:
 
 
 def _cred(name: str, **kw: Any) -> m.Credential:
-    c = m.Credential(id=uuid.uuid4(), name=name, username=kw.pop("username", None),
-                     attributes=kw.pop("attributes", {}))
+    c = m.Credential(id=uuid.uuid4(), name=name, username=kw.pop("username", None))
+    set_attributes(c, kw.pop("attributes", {}), BOX)
+    set_secret_attributes(c, kw.pop("secret_attributes", {}), BOX)
     if "password" in kw:
         c.password_enc = BOX.encrypt(kw.pop("password"), aad_for("credentials", "password", c.id))
     return c
@@ -150,7 +158,32 @@ def test_hostname_lookup_feeds_the_hostname_placeholder() -> None:
 # --------------------------------------------------------------------------- OpenBao import
 
 
-def test_import_puts_other_keys_into_attributes_but_not_secret_looking_ones() -> None:
+def test_import_sorts_other_keys_into_attributes_and_secret_attributes() -> None:
     keys = ["username", "password", "port", "Description", "api_token", "ssh-key-old", "host name"]
     assert attribute_fields(keys, {"username", "password"}) == {
-        "attr:port": "port", "attr:Description": "Description", "attr:host_name": "host name"}
+        "attr:port": "port", "attr:Description": "Description", "attr:host_name": "host name",
+        "secret:api_token": "api_token", "secret:ssh-key-old": "ssh-key-old"}
+
+
+# --------------------------------------------------------------------------- attributes at rest
+
+
+def test_attributes_are_encrypted_and_bound_to_their_credential() -> None:
+    c = _cred("web01", attributes={"port": "2222"}, secret_attributes={"api_token": "t0ps3cret"})
+    assert c.attributes_enc and b"2222" not in c.attributes_enc
+    assert c.secret_attributes_enc and b"t0ps3cret" not in c.secret_attributes_enc
+    assert get_attributes(c, BOX) == {"port": "2222"}
+    assert get_secret_attributes(c, BOX) == {"api_token": "t0ps3cret"}
+    assert secret_attribute_names(c, BOX) == ["api_token"]
+    other = _cred("other")
+    other.attributes_enc = c.attributes_enc  # copied ciphertext does not decrypt for another row
+    with pytest.raises(CryptoError):
+        get_attributes(other, BOX)
+
+
+def test_secret_attributes_reach_sessions_only() -> None:
+    c = _cred("web01_root", secret_attributes={"api_token": "t0ps3cret"})
+    assert credential_lookup_value([c], "api_token", BOX, include_secrets=True) == "t0ps3cret"
+    assert credential_lookup_value([c], "api_token", BOX, include_secrets=False) is None
+    with pytest.raises(LookupFailed):
+        credential_lookup_value([c], "missing", BOX, include_secrets=True)

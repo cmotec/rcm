@@ -28,6 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app import models as m
 from app.errors import NotFound, ValidationFailed
 from app.security.crypto import SecretBox, aad_for
+from app.services.credential_attributes import get_attributes, get_secret_attributes
 from app.services.lookups import LookupFailed, find_credential, parse_lookup, substitute
 
 MAX_CHAIN = 32
@@ -375,7 +376,9 @@ def _literal_search_domain(chain: list[m.Connection], folders: list[m.Folder], e
 
 def credential_lookup_value(creds: list[m.Credential], fname: str, box: SecretBox | None,
                             include_secrets: bool) -> Any:
-    """``fname`` of the credential (chain): a login field, or else one of its attributes."""
+    """``fname`` of the credential (chain): a login field, an attribute, or a secret attribute.
+    Secrets (fields and secret attributes) are only decrypted with ``include_secrets`` (sessions);
+    otherwise their value is None."""
     name = creds[0].name
     if fname in AUTH_FIELDS:
         r = credential_values(creds, box, include_secrets=include_secrets).get(fname)
@@ -383,7 +386,17 @@ def credential_lookup_value(creds: list[m.Credential], fname: str, box: SecretBo
             raise LookupFailed(f"credential '{name}' has no {fname}")
         return r.value
     for cred in creds:
-        v = (cred.attributes or {}).get(fname)
+        v = get_attributes(cred, box).get(fname)
+        if v not in (None, ""):
+            return str(v)
+    for cred in creds:
+        if cred.secret_attributes_enc is None:
+            continue
+        if not include_secrets:
+            if fname in get_secret_attributes(cred, box):
+                return None  # set, but secret: only a session reads it
+            continue
+        v = get_secret_attributes(cred, box).get(fname)
         if v not in (None, ""):
             return str(v)
     raise LookupFailed(f"credential '{name}' has no attribute '{fname}'")
@@ -497,7 +510,9 @@ def compute_effective(
     # port -----------------------------------------------------------------------
     port: Resolved | None = None
     lk_port = from_lookup(conn, "port")
-    if isinstance(lk_port, Resolved):
+    if isinstance(lk_port, Resolved) and lk_port.value is None:
+        port = Resolved(None, lk_port.source)  # from a secret attribute: known only to sessions
+    elif isinstance(lk_port, Resolved):
         try:
             port_value = int(str(lk_port.value).strip())
             if not 1 <= port_value <= 65535:

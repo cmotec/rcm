@@ -318,6 +318,20 @@ class TreeOut(BaseModel):
 # --------------------------------------------------------------------------- credentials
 
 
+def _check_attributes(v: dict[str, str | None]) -> dict[str, str | None]:
+    if len(v) > 100:
+        raise ValueError("at most 100 attributes")
+    out: dict[str, str | None] = {}
+    for k, val in v.items():
+        key = k.strip()
+        if not key or len(key) > 59 or not all(ch.isalnum() or ch in "_-." for ch in key):
+            raise ValueError(f"attribute name '{k}': 1-59 characters, letters, digits, '_', '-', '.'")
+        if val is not None and len(str(val)) > 8000:
+            raise ValueError(f"attribute '{key}' is too long (max 8000 characters)")
+        out[key] = None if val is None else str(val)
+    return out
+
+
 class CredentialFields(Strict):
     username: str | None = Field(None, max_length=255)
     domain: str | None = Field(None, max_length=255)
@@ -329,24 +343,21 @@ class CredentialFields(Strict):
     rotation_interval_days: int | None = Field(None, ge=1, le=3650)
     folder_id: uuid.UUID | None = None
     attributes: dict[str, str] | None = Field(
-        None, description="non-secret values for lookups (port, hostname, description, …); stored unencrypted")
+        None, description="values for lookups (port, hostname, description, …), encrypted at rest, shown to "
+                          "viewers; replaces all attributes")
+    secret_attributes: dict[str, str | None] | None = Field(
+        None, description="write-only values for lookups (encrypted, never returned): a value sets, null removes; "
+                          "names not listed stay unchanged")
 
     @field_validator("attributes")
     @classmethod
     def _attributes(cls, v: dict[str, str] | None) -> dict[str, str] | None:
-        if v is None:
-            return v
-        if len(v) > 100:
-            raise ValueError("at most 100 attributes")
-        out: dict[str, str] = {}
-        for k, val in v.items():
-            key = k.strip()
-            if not key or len(key) > 64 or not all(ch.isalnum() or ch in "_-." for ch in key):
-                raise ValueError(f"attribute name '{k}': 1-64 characters, letters, digits, '_', '-', '.'")
-            if len(str(val)) > 4000:
-                raise ValueError(f"attribute '{key}' is too long (max 4000 characters)")
-            out[key] = str(val)
-        return out
+        return None if v is None else {k: val for k, val in _check_attributes(v).items() if val is not None}
+
+    @field_validator("secret_attributes")
+    @classmethod
+    def _secret_attributes(cls, v: dict[str, str | None] | None) -> dict[str, str | None] | None:
+        return None if v is None else _check_attributes(v)
 
     @field_validator("metadata")
     @classmethod
@@ -393,6 +404,7 @@ class CredentialOut(Out):
     usage_count: int = 0
     folder_id: uuid.UUID | None = None
     attributes: dict[str, str] = {}
+    secret_attribute_names: list[str] = []
 
 
 class CredentialFolderCreate(Strict):
@@ -426,11 +438,12 @@ class CredentialSecrets(BaseModel):
     password: str | None
     private_key: str | None
     passphrase: str | None
+    secret_attributes: dict[str, str] | None = None
 
 
 class CredentialReveal(Strict):
     reason: str | None = Field(None, max_length=500)
-    fields: list[Literal["password", "private_key", "passphrase"]] = ["password"]
+    fields: list[Literal["password", "private_key", "passphrase", "secret_attributes"]] = ["password"]
 
 
 # --------------------------------------------------------------------------- ACL

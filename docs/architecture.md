@@ -269,9 +269,13 @@ Any of `username`, `password`, `domain`, `private_key`, `passphrase`, `hostname`
 * `*` matches any text; names are compared case-insensitively and must match completely.
 * Only credentials the user may use count (`connect` when opening, `view` for the details shown).
   Exactly one must match; no match or several matches is an error, nothing is guessed.
-* `<field>`: a login field of the credential (secrets are decrypted only for the session), or else
-  one of its **attributes**: non-secret key/value pairs on the credential (e.g. `port`,
-  `description`), which the OpenBao import fills from the secret's other keys.
+* `<field>`: a login field of the credential, one of its **attributes** (key/value pairs shown to
+  everyone who may view the credential, e.g. `port`, `description`), or one of its **secret
+  attributes** (write-only like the password, e.g. an API token). The OpenBao import fills both from
+  the secret's other keys. Secrets (password, key, passphrase, secret attributes) are decrypted only
+  for the session; the tree and the details panel never show them.
+* Attributes and secret attributes are stored encrypted (AES-256-GCM, bound to credential and column,
+  `attributes_enc`, `secret_attributes_enc`).
 * A lookup replaces the connection's own value for that field and takes part in inheritance like
   it. Login lookups belong to "connection-specific" authentication.
 * A failing lookup is shown in the details panel and the connection dialog; opening the connection

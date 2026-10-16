@@ -33,6 +33,7 @@ from app.security.crypto import aad_for, get_box
 from app.services import audit
 from app.services.app_settings import RuntimeSettings, get_runtime
 from app.services.authz import LEVEL_NAMES, AccessContext, Perm
+from app.services.credential_attributes import get_attributes
 from app.services.lookups import LookupFailed, find_credential, parse_lookup, substitute
 from app.services.resolution import AUTH_FIELDS, resolve_connection, would_create_cycle
 
@@ -133,7 +134,7 @@ async def display_lookups(db: AsyncSession, conns: list[m.Connection], access: A
             return getattr(cred, fname)
         if fname in AUTH_FIELDS:
             return None  # secret: never shown
-        v = (cred.attributes or {}).get(fname)
+        v = get_attributes(cred).get(fname)  # secret attributes are never shown
         return None if v in (None, "") else str(v)
 
     out: dict[uuid.UUID, dict] = {}
