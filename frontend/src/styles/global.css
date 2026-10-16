@@ -494,3 +494,21 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; user-sel
 .secret-list li { display: flex; align-items: center; gap: 8px; cursor: pointer; }
 .secret-list li span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .row.nowrap { flex-wrap: nowrap; margin: 0; gap: 4px; }
+
+/* Credential store with folders */
+.cred-layout { display: grid; grid-template-columns: 240px minmax(0, 1fr); gap: 16px; align-items: start; }
+.cred-layout aside { position: sticky; top: 0; }
+.cred-folders ul { list-style: none; margin: 0; padding: 0; }
+.cred-folder { display: flex; align-items: center; gap: 6px; width: 100%; text-align: left; border: 0; background: none;
+  padding: 5px 8px; border-radius: 6px; color: var(--text); cursor: pointer; font: inherit; }
+.cred-folder span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cred-folder:hover { background: var(--hover, rgba(127, 127, 127, 0.12)); }
+.cred-folder.active { background: var(--accent-soft); color: var(--accent); }
+.cred-folder-head { margin-top: 0; }
+.cred-folder-head b { display: inline-flex; align-items: center; gap: 6px; }
+.attr-row input { flex: 1; min-width: 0; }
+@media (max-width: 768px) { .cred-layout { grid-template-columns: 1fr; } .cred-layout aside { position: static; } }
+
+.lookup-hint { margin-top: 4px; }
+.lookup-hint summary { cursor: pointer; color: var(--text-muted); font-size: 12px; }
+.lookup-hint p { margin: 6px 0 0; }

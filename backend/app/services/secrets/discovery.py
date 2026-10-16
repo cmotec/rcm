@@ -9,7 +9,12 @@ provider is walked from ``import_path``:
   ``password``/``pass``/``pwd``, ``domain``, ``private_key``/``ssh_key``, ``passphrase`` and a few
   more; case, ``-``/``_`` and spaces are ignored). A secret with a single key that matches nothing,
   e.g. a key without a name, is taken as the password;
-* the matching keys become secret mappings, and the normal sync then fills in the values.
+* every other key becomes a credential attribute (``attr:<key>``, stored unencrypted, readable by
+  lookups such as ``{{lookup:{hostname}_root:port}}``), except keys whose name looks secret
+  (token, secret, key, certificate, …), which are skipped;
+* the matching keys become secret mappings, and the normal sync then fills in the values;
+* folders: the secret's path below ``import_path`` is mirrored as credential folders below the
+  provider's ``import_folder_id`` (or at the top level).
 
 Already linked secrets only get mappings for keys added since. A credential with the secret's name that
 is not linked to this provider yet is linked instead of creating a duplicate; local values that differ
@@ -29,6 +34,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import models as m
 from app.logging import get_logger
+from app.services.credential_folders import ensure_folder_path
 from app.services.secrets.base import SecretProviderClient
 
 log = get_logger(__name__)
@@ -64,6 +70,24 @@ def fields_for_keys(keys: list[str]) -> dict[str, str]:
             out[field] = key
     if not out and len(keys) == 1:
         out["password"] = keys[0]  # a lone value (often a key without a name) is the password
+    return out
+
+
+# Key names that probably hold a secret: never stored as (unencrypted) attributes.
+_SENSITIVE = re.compile(r"(token|secret|key|pass|pwd|pin|cert|private|credential|auth|otp|seed|salt|hash)",
+                        re.IGNORECASE)
+_ATTR_NAME = re.compile(r"[^A-Za-z0-9_.\-]+")
+
+
+def attribute_fields(keys: list[str], used: set[str]) -> dict[str, str]:
+    """{"attr:<name>": key} for the keys not used for a credential field (secret-looking keys excluded)."""
+    out: dict[str, str] = {}
+    for key in keys:
+        if key in used or not key.strip() or _SENSITIVE.search(key):
+            continue
+        name = _ATTR_NAME.sub("_", key.strip()).strip("_")[:59]
+        if name and f"attr:{name}" not in out:
+            out[f"attr:{name}"] = key
     return out
 
 
@@ -103,7 +127,16 @@ async def discover(db: AsyncSession, client: SecretProviderClient, provider: m.S
     """Create or link credentials for the provider's secrets; returns counters for the sync run."""
     config: dict[str, Any] = provider.config or {}
     stats = {"discovered": 0, "created": 0, "linked": 0, "keys_added": 0, "skipped": 0}
-    secrets = await _walk(client, str(config.get("import_path") or ""))
+    import_path = _norm(str(config.get("import_path") or ""))
+    secrets = await _walk(client, import_path)
+    target_folder: uuid.UUID | None = None
+    if config.get("import_folder_id"):
+        try:
+            target_folder = uuid.UUID(str(config["import_folder_id"]))
+        except ValueError:
+            target_folder = None
+        if target_folder and await db.get(m.CredentialFolder, target_folder) is None:
+            target_folder = None  # folder deleted meanwhile: import at the top level
     stats["discovered"] = len(secrets)
 
     mappings = (await db.execute(select(m.SecretMapping).where(m.SecretMapping.provider_id == provider.id))).scalars().all()
@@ -117,6 +150,7 @@ async def discover(db: AsyncSession, client: SecretProviderClient, provider: m.S
         if not fields:
             stats["skipped"] += 1
             continue
+        fields.update(attribute_fields(keys, set(fields.values())))
         cred_id = by_path.get(path)
         name = path.rsplit("/", 1)[-1] or path
         if cred_id is None:
@@ -128,7 +162,9 @@ async def discover(db: AsyncSession, client: SecretProviderClient, provider: m.S
                 cred_id = match.id
                 stats["linked"] += 1
             else:
-                cred = m.Credential(id=uuid.uuid4(), name=name[:255], owner_id=actor_id,
+                rel = path[len(import_path):].strip("/") if import_path and path.startswith(import_path) else path
+                folder_id = await ensure_folder_path(db, target_folder, rel.split("/")[:-1], actor_id)
+                cred = m.Credential(id=uuid.uuid4(), name=name[:255], owner_id=actor_id, folder_id=folder_id,
                                     description=f"Imported from {provider.name}: {path}",
                                     meta={"imported_from": provider.name, "external_path": path})
                 db.add(cred)

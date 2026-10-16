@@ -2,11 +2,12 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Plus, RefreshCw, Trash } from 'lucide-react';
 import { useState } from 'react';
 import { del, errorMessage, get, patch, post } from '../../api/client';
-import { hasPerm, useMe, useTree } from '../../api/hooks';
+import { hasPerm, useCredentialFolders, useMe, useTree } from '../../api/hooks';
 import type { AuditEvent, Connection, KnownHost, Page, Role, SecretProvider, Tree, User } from '../../api/types';
 import { dialogs } from '../../state/dialogs';
 import { formatDate } from '../../util/download';
 import { Modal } from '../common/Modal';
+import { CredentialFolderSelect } from '../credentials/CredentialsView';
 import { ImportWizard } from './ImportWizard';
 
 type Section = 'users' | 'roles' | 'hosts' | 'secrets' | 'import' | 'audit' | 'settings';
@@ -327,12 +328,13 @@ interface ProviderField {
   /** [value, label] pairs: shown as a dropdown */
   options?: [string, string][];
   defaultValue?: string;
-  /** a checkbox (stored as true/false) */
-  kind?: 'bool';
+  /** a checkbox (stored as true/false), or a credential folder picker */
+  kind?: 'bool' | 'cred-folder';
   hint?: string;
 }
 
 function ProviderDialog({ provider, onClose }: { provider?: SecretProvider; onClose: () => void }) {
+  const { data: credFolders } = useCredentialFolders();
   const [name, setName] = useState(provider?.name ?? '');
   const [config, setConfig] = useState<Record<string, string>>(Object.fromEntries(Object.entries(provider?.config ?? {}).map(([k, v]) => [k, String(v ?? '')])));
   const [secrets, setSecrets] = useState<Record<string, string>>({});
@@ -352,7 +354,10 @@ function ProviderDialog({ provider, onClose }: { provider?: SecretProvider; onCl
         hint: 'Each secret becomes a credential named after it. Keys such as username, password, domain, private_key '
           + 'are matched to the credential fields; a secret with a single key (also without a name) is its password.' },
       ...(config.auto_import === 'true'
-        ? [{ key: 'import_path', label: 'Only secrets below this path (optional)', placeholder: 'e.g. servers/ (empty = whole mount)' }]
+        ? [
+          { key: 'import_path', label: 'Only secrets below this path (optional)', placeholder: 'e.g. servers/ (empty = whole mount)' },
+          { key: 'import_folder_id', label: 'Into this credential folder (OpenBao sub-paths become sub-folders)', kind: 'cred-folder' as const },
+        ]
         : []),
     ];
   const secretFields = approle ? [['role_id', 'AppRole role_id'], ['secret_id', 'AppRole secret_id']] : [['token', 'Token']];
@@ -383,7 +388,12 @@ function ProviderDialog({ provider, onClose }: { provider?: SecretProvider; onCl
            footer={<>{error && <span className="form-error">{error}</span>}<button onClick={onClose}>Cancel</button><button className="primary" onClick={save}>Save</button></>}>
       {locked && <div className="banner info">Configured through environment variables; only enable/interval can be changed here.</div>}
       <label className="field"><span>Name</span><input value={name} disabled={locked} onChange={(e) => setName(e.target.value)} /></label>
-      {configFields.map((f) => f.kind === 'bool' ? (
+      {configFields.map((f) => f.kind === 'cred-folder' ? (
+        <label key={f.key} className="field"><span>{f.label}</span>
+          <CredentialFolderSelect folders={credFolders ?? []} value={config[f.key] ?? ''} disabled={locked}
+                                  emptyLabel="— top level —" onChange={(id) => setConfig({ ...config, [f.key]: id })} />
+        </label>
+      ) : f.kind === 'bool' ? (
         <label key={f.key} className="check">
           <input type="checkbox" checked={config[f.key] === 'true'} disabled={locked}
                  onChange={(e) => setConfig({ ...config, [f.key]: String(e.target.checked) })} />

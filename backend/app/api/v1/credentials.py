@@ -62,7 +62,19 @@ async def credential_out(db: AsyncSession, c: m.Credential, access: AccessContex
         rotation_due=rotation_due, version=c.version, created_at=c.created_at, updated_at=c.updated_at,
         permission=LEVEL_NAMES.get(access.level_of("credential", c.id)) or None,
         external_fields=sorted(mapped), usage_count=usage,
+        folder_id=c.folder_id, attributes=dict(c.attributes or {}),
     )
+
+
+async def check_folder_target(db: AsyncSession, access: AccessContext, folder_id: uuid.UUID | None) -> None:
+    """Putting a credential into a folder needs 'edit' on the folder; the top level needs the create right."""
+    if folder_id is None:
+        if not access.has(Perm.CREDENTIALS_CREATE):
+            raise Forbidden("not allowed to put credentials at the top level")
+        return
+    if await db.get(m.CredentialFolder, folder_id) is None or not access.can("cred_folder", folder_id, "view"):
+        raise ValidationFailed("credential folder not found")
+    access.ensure("cred_folder", folder_id, "edit")
 
 
 async def _get(db: AsyncSession, access: AccessContext, cid: uuid.UUID, needed: str) -> m.Credential:
@@ -92,6 +104,9 @@ def _refresh_key_fingerprint(cred: m.Credential) -> None:
 
 def local_hash(cred: m.Credential, fname: str) -> str | None:
     """Fingerprint of a field's current value, for secret-sync conflict detection."""
+    if fname.startswith(m.ATTRIBUTE_FIELD_PREFIX):
+        v = (cred.attributes or {}).get(fname[len(m.ATTRIBUTE_FIELD_PREFIX):])
+        return fingerprint(str(v)) if v not in (None, "") else None
     if fname in ("username", "domain"):
         v = getattr(cred, fname)
     else:
@@ -102,9 +117,14 @@ def local_hash(cred: m.Credential, fname: str) -> str | None:
 
 @router.get("", response_model=Page[CredentialOut], summary="List credentials (metadata only)")
 async def list_credentials(q: str | None = Query(None, max_length=200), p: Paging = Depends(paging),
+                           folder_id: uuid.UUID | None = Query(None, description="only this credential folder…"),
+                           recursive: bool = Query(True, description="…and the folders below it"),
                            principal: Principal = Depends(get_access), db: AsyncSession = Depends(get_db, scope="function")):
     access = principal.access
     stmt = select(m.Credential).order_by(func.lower(m.Credential.name))
+    if folder_id is not None:
+        ids = access.cred_folder_subtree(folder_id) if recursive else {folder_id}
+        stmt = stmt.where(m.Credential.folder_id.in_(ids))
     if q:
         like = f"%{q.lower()}%"
         stmt = stmt.where(or_(func.lower(m.Credential.name).like(like), func.lower(m.Credential.username).like(like),
@@ -119,6 +139,7 @@ async def create_credential(body: CredentialCreate, request: Request, principal:
                             db: AsyncSession = Depends(get_db, scope="function")):
     access = principal.access
     access.require(Perm.CREDENTIALS_CREATE)
+    await check_folder_target(db, access, body.folder_id)
     if body.parent_id:
         await _get(db, access, body.parent_id, "connect")
     idem = await idempotency(db, request, principal, body.model_dump(exclude=set(SECRET_FIELDS)) | {
@@ -127,7 +148,8 @@ async def create_credential(body: CredentialCreate, request: Request, principal:
         return idem.replay
     cred = m.Credential(id=uuid.uuid4(), name=body.name, parent_id=body.parent_id, username=body.username,
                         domain=body.domain, description=body.description, meta=body.metadata or {},
-                        owner_id=principal.id, rotation_interval_days=body.rotation_interval_days)
+                        owner_id=principal.id, rotation_interval_days=body.rotation_interval_days,
+                        folder_id=body.folder_id, attributes=body.attributes or {})
     for f in SECRET_FIELDS:
         _set_secret(cred, f, getattr(body, f))
     if body.private_key and _key_fingerprint(body.private_key, body.passphrase) is None:
@@ -168,6 +190,11 @@ async def update_credential(credential_id: uuid.UUID, body: CredentialUpdate,
             if await would_create_cycle(db, m.Credential, cred.id, body.parent_id):
                 raise ValidationFailed("credential inheritance would create a cycle")
         cred.parent_id = body.parent_id
+    if "folder_id" in fields and body.folder_id != cred.folder_id:
+        await check_folder_target(db, access, body.folder_id)
+        cred.folder_id = body.folder_id
+    if "attributes" in fields:
+        cred.attributes = body.attributes or {}
     if "name" in fields and body.name:
         cred.name = body.name
     for f in ("username", "domain", "description", "rotation_interval_days"):
@@ -191,6 +218,9 @@ async def update_credential(credential_id: uuid.UUID, body: CredentialUpdate,
     cred.version += 1
     await db.flush()
     await db.refresh(cred)
+    if "folder_id" in fields:
+        access.invalidate()
+        await access.load(db)
     await audit.record(db, "credential.update", actor_id=principal.id, actor_name=principal.name,
                        resource_type="credential", resource_id=cred.id,
                        details={"fields": sorted(fields), "secrets_changed": changed,

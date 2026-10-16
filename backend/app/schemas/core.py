@@ -220,6 +220,17 @@ class ConnectionFields(Strict):
     tags: list[str] | None = Field(None, max_length=50)
     settings: dict[str, Any] | None = None
     sort_order: int | None = None
+    lookups: dict[str, str] | None = Field(
+        None, description="field -> {{lookup:<credential name pattern>:<field>}} (see docs/architecture.md)")
+    credential_folder_id: uuid.UUID | None = Field(
+        None, description="auth_mode credential without credential_id: offer only credentials from this folder")
+
+    @field_validator("lookups")
+    @classmethod
+    def _lookups(cls, v: dict[str, str] | None) -> dict[str, str] | None:
+        from app.services.lookups import validate_lookups
+
+        return None if v is None else validate_lookups(v)
 
     @field_validator("tags")
     @classmethod
@@ -293,6 +304,10 @@ class ConnectionOut(Out):
     permission: str | None = None
     favorite: bool = False
     warnings: list[SecurityWarning] = []
+    lookups: dict[str, str] = {}
+    credential_folder_id: uuid.UUID | None = None
+    # display values of lookup fields (hostname, port, description, …), resolved for the caller
+    resolved: dict[str, Any] = {}
 
 
 class TreeOut(BaseModel):
@@ -312,6 +327,26 @@ class CredentialFields(Strict):
     description: str | None = Field(None, max_length=20000)
     metadata: dict[str, Any] | None = None
     rotation_interval_days: int | None = Field(None, ge=1, le=3650)
+    folder_id: uuid.UUID | None = None
+    attributes: dict[str, str] | None = Field(
+        None, description="non-secret values for lookups (port, hostname, description, …); stored unencrypted")
+
+    @field_validator("attributes")
+    @classmethod
+    def _attributes(cls, v: dict[str, str] | None) -> dict[str, str] | None:
+        if v is None:
+            return v
+        if len(v) > 100:
+            raise ValueError("at most 100 attributes")
+        out: dict[str, str] = {}
+        for k, val in v.items():
+            key = k.strip()
+            if not key or len(key) > 64 or not all(ch.isalnum() or ch in "_-." for ch in key):
+                raise ValueError(f"attribute name '{k}': 1-64 characters, letters, digits, '_', '-', '.'")
+            if len(str(val)) > 4000:
+                raise ValueError(f"attribute '{key}' is too long (max 4000 characters)")
+            out[key] = str(val)
+        return out
 
     @field_validator("metadata")
     @classmethod
@@ -356,6 +391,33 @@ class CredentialOut(Out):
     permission: str | None = None
     external_fields: list[str] = []
     usage_count: int = 0
+    folder_id: uuid.UUID | None = None
+    attributes: dict[str, str] = {}
+
+
+class CredentialFolderCreate(Strict):
+    name: str = Field(min_length=1, max_length=255)
+    parent_id: uuid.UUID | None = None
+    description: str | None = Field(None, max_length=10000)
+
+
+class CredentialFolderUpdate(Strict):
+    name: str | None = Field(None, min_length=1, max_length=255)
+    parent_id: uuid.UUID | None = None
+    description: str | None = Field(None, max_length=10000)
+    version: int | None = None
+
+
+class CredentialFolderOut(Out):
+    id: uuid.UUID
+    name: str
+    parent_id: uuid.UUID | None
+    description: str | None
+    owner_id: uuid.UUID | None
+    version: int
+    created_at: datetime
+    updated_at: datetime
+    permission: str | None = None
 
 
 class CredentialSecrets(BaseModel):

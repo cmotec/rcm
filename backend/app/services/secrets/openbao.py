@@ -22,6 +22,8 @@ class OpenBaoConfig(BaseModel):
     # automatic import: every secret below import_path becomes a credential (see secrets/discovery.py)
     auto_import: bool = False
     import_path: str = ""
+    # credential folder that mirrors the OpenBao paths of imported secrets (None = top level)
+    import_folder_id: str | None = None
 
 
 class OpenBaoSecrets(BaseModel):

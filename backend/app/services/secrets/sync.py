@@ -70,6 +70,9 @@ def build_client(p: m.SecretProvider, settings: Settings) -> SecretProviderClien
 
 
 def _read_field(cred: m.Credential, field: str) -> str | None:
+    if field.startswith(m.ATTRIBUTE_FIELD_PREFIX):
+        v = (cred.attributes or {}).get(field[len(m.ATTRIBUTE_FIELD_PREFIX):])
+        return None if v in (None, "") else str(v)
     if field in ("username", "domain"):
         return getattr(cred, field)
     blob = getattr(cred, f"{field}_enc")
@@ -77,6 +80,16 @@ def _read_field(cred: m.Credential, field: str) -> str | None:
 
 
 def _write_field(cred: m.Credential, field: str, value: str | None) -> None:
+    if field.startswith(m.ATTRIBUTE_FIELD_PREFIX):
+        attrs = dict(cred.attributes or {})
+        name = field[len(m.ATTRIBUTE_FIELD_PREFIX):]
+        if value in (None, ""):
+            attrs.pop(name, None)
+        else:
+            attrs[name] = value
+        cred.attributes = attrs  # new dict: JSONB change tracking
+        cred.version += 1
+        return
     if field in ("username", "domain"):
         setattr(cred, field, value)
     else:

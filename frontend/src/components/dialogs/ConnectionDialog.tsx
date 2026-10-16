@@ -1,8 +1,8 @@
 import { CornerDownRight, RotateCcw, ShieldAlert } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { errorMessage, get, patch, post } from '../../api/client';
-import { useCredentials, useInvalidate, useTree } from '../../api/hooks';
-import type { AuthMode, Connection, EffectiveConnection, Protocol, ResolvedValue } from '../../api/types';
+import { folderPath, useCredentialFolders, useCredentials, useInvalidate, useTree } from '../../api/hooks';
+import type { AuthMode, Connection, EffectiveConnection, LookupField, Protocol, ResolvedValue } from '../../api/types';
 import { dialogs } from '../../state/dialogs';
 import { PROTOCOL_LABELS } from '../common/icons';
 import { Modal } from '../common/Modal';
@@ -21,10 +21,32 @@ const AUTH_MODES: { value: AuthMode; label: string; help: string }[] = [
   { value: 'interactive', label: 'Ask when connecting', help: 'Prompt for username and password; nothing is stored.' },
 ];
 
+/** A whole field value of the form {{lookup:<credential name pattern>:<field>}}. */
+const LOOKUP_RE = /^\s*\{\{\s*lookup\s*:.+:[A-Za-z][A-Za-z0-9_]*\s*\}\}\s*$/;
+export const isLookup = (v: string | null | undefined): boolean => Boolean(v && LOOKUP_RE.test(v));
+
+function LookupHint() {
+  return (
+    <details className="lookup-hint span2">
+      <summary>Take values from the credential store (lookups)</summary>
+      <p className="muted small">
+        Instead of a value, a field can hold <code>{'{{lookup:<credential name>:<field>}}'}</code>. When the connection is
+        opened, the credential with that name is looked up and its field is used. In the name, <code>{'{hostname}'}</code>,
+        {' '}<code>{'{name}'}</code> and <code>{'{domain}'}</code> stand for this connection's host name, name and domain, and
+        {' '}<code>*</code> matches any text. Fields: <code>username</code>, <code>password</code>, <code>domain</code>,
+        {' '}<code>private_key</code>, <code>passphrase</code>, or any attribute of the credential (e.g. <code>port</code>,
+        {' '}<code>description</code>). Exactly one credential you may use must match. Example:
+        {' '}<code>{'{{lookup:{hostname}_root:username}}'}</code>
+      </p>
+    </details>
+  );
+}
+
 function sourceLabel(r: ResolvedValue | null | undefined): string {
   if (!r) return '';
   const s = r.source;
   if (s.kind === 'default') return 'protocol default';
+  if (s.kind === 'lookup') return `lookup → credential “${s.name ?? s.id}”`;
   if (s.kind === 'environment') return 'server default (DNS_SEARCH_DOMAINS)';
   return `${s.kind === 'folder' ? 'folder' : s.kind === 'credential' ? 'credential' : ''} “${s.name ?? s.id}”`.trim();
 }
@@ -46,7 +68,9 @@ export function ConnectionDialog({ connection, placement, onClose }: Props) {
   const editing = Boolean(connection);
   const { data: tree } = useTree();
   const { data: creds } = useCredentials();
+  const { data: credFolders } = useCredentialFolders();
   const invalidate = useInvalidate();
+  const lk = connection?.lookups ?? {};
   const parentId = connection?.parent_id ?? placement?.parentId ?? null;
   const folderId = connection?.folder_id ?? placement?.folderId ?? null;
   const parent = tree?.connections.find((c) => c.id === parentId);
@@ -55,17 +79,18 @@ export function ConnectionDialog({ connection, placement, onClose }: Props) {
   const [tab, setTab] = useState<'general' | 'auth' | 'settings'>('general');
   const [name, setName] = useState(connection?.name ?? '');
   const [protocol, setProtocol] = useState<Protocol>(connection?.protocol ?? (parent ? 'ssh' : 'ssh'));
-  const [hostname, setHostname] = useState(connection?.hostname ?? '');
-  const [port, setPort] = useState(connection?.port ? String(connection.port) : '');
-  const [searchDomain, setSearchDomain] = useState(connection?.search_domain ?? '');
-  const [description, setDescription] = useState(connection?.description ?? '');
+  const [hostname, setHostname] = useState(lk.hostname ?? connection?.hostname ?? '');
+  const [port, setPort] = useState(lk.port ?? (connection?.port ? String(connection.port) : ''));
+  const [searchDomain, setSearchDomain] = useState(lk.search_domain ?? connection?.search_domain ?? '');
+  const [description, setDescription] = useState(lk.description ?? connection?.description ?? '');
   const [tags, setTags] = useState((connection?.tags ?? []).join(', '));
   const [authMode, setAuthMode] = useState<AuthMode>(connection?.auth_mode ?? 'inherit');
   const [inheritAuth, setInheritAuth] = useState(connection?.inherit_auth ?? true);
-  const [username, setUsername] = useState(connection?.username ?? '');
-  const [domain, setDomain] = useState(connection?.domain ?? '');
-  const [password, setPassword] = useState<string | null>(null); // null = unchanged
+  const [username, setUsername] = useState(lk.username ?? connection?.username ?? '');
+  const [domain, setDomain] = useState(lk.domain ?? connection?.domain ?? '');
+  const [password, setPassword] = useState<string | null>(lk.password ?? null); // null = unchanged
   const [credentialId, setCredentialId] = useState(connection?.credential_id ?? '');
+  const [credentialFolderId, setCredentialFolderId] = useState(connection?.credential_folder_id ?? '');
   const [settings, setSettings] = useState<Record<string, unknown>>(() => {
     const s = { ...(connection?.settings ?? {}) };
     if (Array.isArray(s.cert_fingerprints)) s.cert_fingerprints = (s.cert_fingerprints as string[]).join('\n');
@@ -150,23 +175,40 @@ export function ConnectionDialog({ connection, placement, onClose }: Props) {
   const save = async () => {
     setSaving(true);
     setError(null);
+    // a field holding {{lookup:…}} is stored as a lookup, not as its value
+    const lookups: Partial<Record<LookupField, string>> = {};
+    const plain = (field: LookupField, value: string): string | null => {
+      if (isLookup(value)) {
+        lookups[field] = value.trim();
+        return null;
+      }
+      return value.trim() || null;
+    };
+    const portValue = plain('port', port);
     const body: Record<string, unknown> = {
       name: effectiveName,
-      hostname: hostname.trim() || null,
-      port: port ? Number(port) : null,
-      search_domain: searchDomain.trim() || null,
-      description: description.trim() || null,
+      hostname: plain('hostname', hostname),
+      port: portValue ? Number(portValue) : null,
+      search_domain: plain('search_domain', searchDomain),
+      description: plain('description', description),
       tags: tags.split(',').map((t) => t.trim()).filter(Boolean),
       auth_mode: authMode,
       inherit_auth: inheritAuth,
       settings: cleanSettings(protocol, settings),
     };
     if (authMode === 'direct' || authMode === 'interactive') {
-      body.username = username.trim() || null;
-      body.domain = domain.trim() || null;
+      body.username = plain('username', username);
+      body.domain = plain('domain', domain);
     }
-    if (authMode === 'direct' && password !== null) body.password = password || null;
-    if (authMode === 'credential') body.credential_id = credentialId || null;
+    if (authMode === 'direct' && password !== null) {
+      if (isLookup(password)) lookups.password = password.trim();
+      else body.password = password || null;
+    }
+    if (authMode === 'credential') {
+      body.credential_id = credentialId || null;
+      body.credential_folder_id = credentialId ? null : credentialFolderId || null;
+    }
+    body.lookups = lookups;
     try {
       if (connection) {
         if (protocol !== connection.protocol) body.protocol = protocol;
@@ -201,9 +243,11 @@ export function ConnectionDialog({ connection, placement, onClose }: Props) {
   };
 
   const isHost = protocol === 'host';
-  // The name is optional: fall back to the host name, then the description.
-  const effectiveName = name.trim() || hostname.trim() || description.split(/\r?\n/)[0].trim().slice(0, 255);
-  const hostForPreview = hostname.trim() || inheritedHost || '';
+  // The name is optional: fall back to the host name, then the description (not lookups).
+  const literalHost = isLookup(hostname) ? '' : hostname.trim();
+  const effectiveName = name.trim() || literalHost || (isLookup(description) ? '' : description.split(/\r?\n/)[0].trim().slice(0, 255));
+  const hostForPreview = (isLookup(hostname) ? effective?.hostname?.value ?? '' : hostname.trim()) || inheritedHost || '';
+  const lookupErrors = Object.entries(effective?.lookup_errors ?? {});
   const domainForPreview = (searchDomain.trim() || inheritedSearch?.split(',')[0]?.trim() || '').replace(/^\.+|\.+$/g, '');
   const connectsTo = hostForPreview
     ? (domainForPreview && !hostForPreview.includes('.') && !hostForPreview.includes(':') ? `${hostForPreview}.${domainForPreview}` : hostForPreview)
@@ -253,8 +297,8 @@ export function ConnectionDialog({ connection, placement, onClose }: Props) {
             </select>
           </label>
           <label className="field"><span>Port</span>
-            <input type="number" value={port} onChange={(e) => setPort(e.target.value)} disabled={isHost}
-                   placeholder={portDefault ? `${portDefault} (default)` : ''} />
+            <input inputMode="numeric" value={port} onChange={(e) => setPort(e.target.value)} disabled={isHost}
+                   placeholder={portDefault ? `${portDefault} (default)` : ''} spellCheck={false} />
           </label>
           <label className="field"><span>Name (optional)</span>
             <input value={name} onChange={(e) => setName(e.target.value)} placeholder={hostname.trim() || 'used when there is no own host name'} />
@@ -269,6 +313,13 @@ export function ConnectionDialog({ connection, placement, onClose }: Props) {
             </div>
           )}
           {protocol === 'ftp' && <div className="span2 banner warn"><ShieldAlert size={14} /> Plain FTP transmits credentials and data unencrypted. Prefer FTPS or SFTP.</div>}
+          {lookupErrors.length > 0 && (
+            <div className="span2 banner error">
+              Lookups that failed (saved state):
+              <ul>{lookupErrors.map(([f, msg]) => <li key={f}><b>{f}</b>: {msg}</li>)}</ul>
+            </div>
+          )}
+          <LookupHint />
         </div>
       )}
 
@@ -294,18 +345,22 @@ export function ConnectionDialog({ connection, placement, onClose }: Props) {
               </label>
               {authMode === 'direct' && (
                 <label className="field span2"><span>Password</span>
-                  {password === null && connection?.password_set ? (
+                  {password !== null && isLookup(password) ? (
+                    <input value={password} onChange={(e) => setPassword(e.target.value)} spellCheck={false} />
+                  ) : password === null && connection?.password_set ? (
                     <div className="row">
                       <span className="muted">•••••••• (stored, encrypted)</span>
                       <button type="button" onClick={() => setPassword('')}>Change</button>
                       <button type="button" className="danger" onClick={() => setPassword('')}>Clear</button>
                     </div>
                   ) : (
-                    <input type="password" value={password ?? ''} onChange={(e) => setPassword(e.target.value)} autoComplete="new-password"
-                           placeholder={connection?.password_set ? 'empty = remove stored password' : 'optional'} />
+                    <input type={password?.startsWith('{{') ? 'text' : 'password'} value={password ?? ''}
+                           onChange={(e) => setPassword(e.target.value)} autoComplete="new-password"
+                           placeholder={connection?.password_set ? 'empty = remove stored password' : 'optional, or {{lookup:…:password}}'} />
                   )}
                 </label>
               )}
+              <LookupHint />
             </div>
           )}
           {authMode === 'credential' && (
@@ -320,6 +375,17 @@ export function ConnectionDialog({ connection, placement, onClose }: Props) {
                   <option key={c.id} value={c.id}>{c.name}{c.username ? ` (${c.domain ? `${c.domain}\\` : ''}${c.username})` : ''}</option>
                 ))}
               </select>
+            </label>
+          )}
+          {authMode === 'credential' && !credentialId && (
+            <label className="field"><span>Offer only credentials from this folder</span>
+              <select value={credentialFolderId} onChange={(e) => setCredentialFolderId(e.target.value)}>
+                <option value="">— all credentials the user may use —</option>
+                {[...(credFolders ?? [])]
+                  .sort((a, b) => folderPath(credFolders ?? [], a.id).localeCompare(folderPath(credFolders ?? [], b.id)))
+                  .map((f) => <option key={f.id} value={f.id}>{folderPath(credFolders ?? [], f.id)}</option>)}
+              </select>
+              <small className="muted">Includes the folders below it.</small>
             </label>
           )}
           <label className="check">

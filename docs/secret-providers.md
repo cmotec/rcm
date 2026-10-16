@@ -45,6 +45,15 @@ provider from environment variables), every full sync walks the KV mount, or onl
 
   A secret with a single key that matches none of these, for example a key without a name, is
   taken as the password. Secrets without any usable key are skipped.
+* every **other key** becomes a credential **attribute** (`attr:<key>`): non-secret values such as
+  `port`, `description` or `hostname` that connections read with lookups, e.g.
+  `{{lookup:{hostname}_root:port}}`. Attributes are stored **unencrypted**, so keys whose name looks
+  secret (containing token, secret, key, pass, pin, cert, private, auth, …) are not imported as
+  attributes.
+* **folders:** choose a credential folder in the provider settings; the secret's path below
+  *import path* is mirrored as sub-folders there (`infrastructure/dmz/web01` → `<folder>/dmz/web01`).
+  Without a folder, the structure starts at the top level. Only newly created credentials are placed;
+  credentials you moved stay where they are.
 * the matched keys become mappings and the sync fills in the values. Keys added to a secret later
   get mappings on the next sync.
 * a credential that already has the secret's name, and is not linked to this provider yet, is linked

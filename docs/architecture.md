@@ -254,6 +254,39 @@ entries have the same parent rule (`parent_id`): an empty field falls back to
 the parent credential. Cycles are rejected on write. During resolution the
 depth is capped at 32.
 
+### Lookups (values from the credential store)
+
+Any of `username`, `password`, `domain`, `private_key`, `passphrase`, `hostname`, `port`,
+`search_domain` and `description` can hold a lookup instead of a value:
+
+```
+{{lookup:<credential name pattern>:<field>}}      e.g. {{lookup:{hostname}_root:username}}
+```
+
+* Placeholders: `{hostname}` (host name of the **opened** connection, so a lookup on a parent applies to
+  each child with its own host), `{name}` (its name), `{domain}` (its search domain). A hostname
+  lookup cannot use `{hostname}`, a domain lookup cannot use `{domain}`.
+* `*` matches any text; names are compared case-insensitively and must match completely.
+* Only credentials the user may use count (`connect` when opening, `view` for the details shown).
+  Exactly one must match; no match or several matches is an error, nothing is guessed.
+* `<field>`: a login field of the credential (secrets are decrypted only for the session), or else
+  one of its **attributes**: non-secret key/value pairs on the credential (e.g. `port`,
+  `description`), which the OpenBao import fills from the secret's other keys.
+* A lookup replaces the connection's own value for that field and takes part in inheritance like
+  it. Login lookups belong to "connection-specific" authentication.
+* A failing lookup is shown in the details panel and the connection dialog; opening the connection
+  fails with the message (`lookup_failed`). The tree shows resolved display values.
+
+Stored in `connections.lookups` (field → expression); the plain column of that field stays empty.
+
+### Credential folders
+
+The credential store has its own folder tree (`credential_folders`), separate from connection
+folders. Grants on a folder (ACL resource type `cred_folder`) apply to the folders and credentials
+below it, like connection folders; the credential-store root grant (`credential`, all-zero UUID)
+covers everything. "Choose a credential at connect time" can be limited to one folder (and its
+sub-folders): `connections.credential_folder_id`.
+
 ### Where interactive credentials live
 The values from the interactive prompt are kept on the in-memory session
 object, so "reconnect" works without asking again. They are discarded when

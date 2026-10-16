@@ -19,14 +19,15 @@ from app.services.authz import LEVEL_NAMES, ROOT_ID, Perm, build_access_context
 
 router = APIRouter(prefix="/acl", tags=["permissions"])
 
-ResourceType = Literal["folder", "connection", "credential"]
-MODELS = {"folder": m.Folder, "connection": m.Connection, "credential": m.Credential}
+ResourceType = Literal["folder", "connection", "credential", "cred_folder"]
+MODELS = {"folder": m.Folder, "connection": m.Connection, "credential": m.Credential,
+          "cred_folder": m.CredentialFolder}
 
 
 async def _check_resource(db: AsyncSession, principal: Principal, rtype: str, rid: uuid.UUID, needed: str) -> None:
     access = principal.access
     if rid == ROOT_ID:
-        if rtype == "connection":
+        if rtype in ("connection", "cred_folder"):
             raise ValidationFailed("root grants use resource type 'folder' or 'credential'")
         if not access.is_admin:
             raise Forbidden("only administrators can manage root-level grants")

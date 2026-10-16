@@ -20,7 +20,7 @@ const LEVELS: { value: PermissionLevel; label: string }[] = [
 ];
 
 export function AclDialog({ resourceType, resourceId, name, onClose }: {
-  resourceType: 'folder' | 'connection' | 'credential';
+  resourceType: 'folder' | 'connection' | 'credential' | 'cred_folder';
   resourceId: string;
   name: string;
   onClose: () => void;

@@ -32,6 +32,12 @@ export function DetailsPanel({ connection, onClose, onEdit }: { connection: Conn
         <button disabled={!['edit', 'manage'].includes(connection.permission ?? '')} onClick={onEdit}><Pencil size={14} /> Edit</button>
       </div>
       {connection.warnings.map((w) => <div key={w.code} className="banner warn"><ShieldAlert size={14} /> {w.message}</div>)}
+      {Object.entries(eff?.lookup_errors ?? {}).length > 0 && (
+        <div className="banner error">
+          Lookup failed, the connection cannot be opened:
+          <ul>{Object.entries(eff!.lookup_errors!).map(([f, msg]) => <li key={f}><b>{f}</b>: {msg}</li>)}</ul>
+        </div>
+      )}
       <dl className="kv">
         <dt>Protocol</dt><dd>{PROTOCOL_LABELS[connection.protocol]}</dd>
         <dt>Host</dt><dd>{eff?.hostname?.value ?? <span className="muted">not set</span>} <Source r={eff?.hostname} /></dd>
@@ -50,7 +56,9 @@ export function DetailsPanel({ connection, onClose, onEdit }: { connection: Conn
       {eff && eff.chain.length > 1 && (
         <div className="small muted">Inheritance chain: {eff.chain.map((c) => c.name).join(' ← ')}</div>
       )}
-      {connection.description && <p className="description">{connection.description}</p>}
+      {(eff?.description?.value ?? connection.description) && (
+        <p className="description">{eff?.description?.value ?? connection.description} <Source r={eff?.description} /></p>
+      )}
     </aside>
   );
 }
