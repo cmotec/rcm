@@ -287,9 +287,11 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; user-sel
 
 /* --- modal ------------------------------------------------------------------------------ */
 .modal-backdrop { position: fixed; inset: 0; background: rgba(8, 10, 14, 0.45); display: grid; place-items: center; z-index: 1000; padding: 20px; }
-.modal { background: var(--bg-elev); border-radius: 10px; box-shadow: var(--shadow); max-width: 100%; max-height: calc(100vh - 40px); display: flex; flex-direction: column; }
+.modal { background: var(--bg-elev); border-radius: 10px; box-shadow: var(--shadow); max-width: 100%; max-height: calc(100vh - 40px); display: flex; flex-direction: column; overflow: hidden; }
 .modal-head { display: flex; align-items: center; justify-content: space-between; padding: 12px 14px; border-bottom: 1px solid var(--border); }
-.modal-body { padding: 14px; overflow: auto; }
+/* min-height: 0 lets the body shrink below its content inside the flex column, so it scrolls */
+.modal-body { padding: 14px; overflow: auto; flex: 1 1 auto; min-height: 0; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+.modal-head, .modal-foot { flex: none; }
 .modal-foot { display: flex; justify-content: flex-end; gap: 8px; padding: 10px 14px; border-top: 1px solid var(--border); align-items: center; }
 .tabs-inline { display: flex; gap: 2px; border-bottom: 1px solid var(--border); margin: 8px 0 14px; }
 .tabs-inline button { border: none; border-bottom: 2px solid transparent; border-radius: 0; background: none; color: var(--text-muted); }
@@ -417,8 +419,10 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; user-sel
   .floating { left: 0 !important; top: 0 !important; width: 100% !important; height: 100% !important; }
   .rz { display: none; }
 
-  .modal-backdrop { padding: 0; place-items: stretch; }
+  /* full screen, but only the visible part: above the on-screen keyboard (util/viewport.ts) */
+  .modal-backdrop { padding: 0; place-items: stretch; inset: 0 0 auto 0; height: var(--app-height, 100%); }
   .modal { width: 100% !important; max-height: 100%; height: 100%; border-radius: 0; }
+  .modal-foot { flex-wrap: wrap; padding-bottom: max(10px, env(safe-area-inset-bottom)); }
   .form-grid { grid-template-columns: 1fr; }
   .form-grid .span2 { grid-column: auto; }
   .radio-cards { grid-template-columns: 1fr 1fr; }
