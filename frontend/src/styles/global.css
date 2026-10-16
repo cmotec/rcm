@@ -516,3 +516,32 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; user-sel
 /* A session in its own browser window */
 .popup-session { position: fixed; inset: 0; display: flex; background: var(--bg); }
 .popup-session > .session-frame { flex: 1; min-width: 0; min-height: 0; border: 0; border-radius: 0; }
+
+/* Phones: a table.grid.stack shows each row as a card, every cell with its label (data-label) */
+@media (max-width: 768px) {
+  .grid.stack { display: block; overflow: visible; border: 0; background: none; }
+  .grid.stack thead { display: none; }
+  .grid.stack tbody { display: flex; flex-direction: column; gap: 8px; }
+  .grid.stack tr { display: flex; flex-direction: column; background: var(--bg-elev); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 8px 10px; }
+  .grid.stack td { display: grid; grid-template-columns: 104px minmax(0, 1fr); gap: 8px; align-items: center;
+    padding: 3px 0; border: 0; overflow-wrap: anywhere; }
+  .grid.stack td::before { content: attr(data-label); color: var(--text-muted); font-size: 12px; }
+  .grid.stack td:not([data-label]) { display: block; }
+  .grid.stack td:not([data-label])::before { content: none; }
+  .grid.stack td.stack-title { font-size: 15px; padding-bottom: 4px; }
+  .grid.stack td.stack-empty { display: none; }
+  .grid.stack td.actions { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-start; text-align: left;
+    white-space: normal; border-top: 1px solid var(--border); margin-top: 6px; padding-top: 8px; }
+  .grid.stack td.actions .icon-btn { padding: 8px; }
+  .grid.stack td[colspan] { display: block; }
+
+  .cred-layout { gap: 10px; }
+  .cred-layout aside { display: flex; gap: 8px; align-items: center; }
+  .cred-layout aside .row { margin: 0; }
+  .cred-folder-select { flex: 1; min-width: 0; }
+  .cred-folder-head { flex-wrap: wrap; }
+  .cred-folder-head b { flex-basis: 100%; overflow-wrap: anywhere; }
+  .page-head .search { max-width: none; flex-basis: 100%; order: 3; }
+  .page-head h1 { font-size: 17px; }
+}

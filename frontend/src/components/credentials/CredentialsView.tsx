@@ -7,6 +7,7 @@ import { dialogs } from '../../state/dialogs';
 import { formatDate } from '../../util/download';
 import { AclDialog } from '../dialogs/AclDialog';
 import { Modal } from '../common/Modal';
+import { MOBILE_QUERY, useMediaQuery } from '../../util/useMediaQuery';
 import { SecretBrowser } from './SecretBrowser';
 
 type SecretField = 'password' | 'private_key' | 'passphrase';
@@ -235,7 +236,7 @@ function MappingsDialog({ credential, onClose }: { credential: Credential; onClo
              <button className="primary" disabled={!providers.length} onClick={save}>Save & sync</button>
            </>}>
       {!providers.length && <p className="muted">No secret providers are configured. An administrator can add OpenBao under Administration → Secret providers.</p>}
-      <table className="grid">
+      <table className="grid stack">
         <thead><tr><th>Field</th><th>Provider</th><th>Path</th><th>Key</th><th>On conflict</th><th>On remote delete</th><th>Status</th><th /></tr></thead>
         <tbody>
           {draft.map((d, i) => {
@@ -243,7 +244,7 @@ function MappingsDialog({ credential, onClose }: { credential: Credential; onClo
             const set = (patchObj: Partial<typeof d>) => setDraft(draft.map((x, j) => (j === i ? { ...x, ...patchObj } : x)));
             return (
               <tr key={i}>
-                <td>
+                <td data-label="Field">
                   <select value={d.field.startsWith('attr:') ? 'attr:' : d.field}
                           onChange={(e) => set({ field: e.target.value === 'attr:' ? (d.field.startsWith('attr:') ? d.field : 'attr:') : e.target.value })}>
                     {['username', 'password', 'domain', 'private_key', 'passphrase'].map((f) => <option key={f}>{f}</option>)}
@@ -254,10 +255,10 @@ function MappingsDialog({ credential, onClose }: { credential: Credential; onClo
                            onChange={(e) => set({ field: `attr:${e.target.value.replace(/[^A-Za-z0-9_.-]/g, '')}` })} />
                   )}
                 </td>
-                <td><select value={d.provider_id} onChange={(e) => set({ provider_id: e.target.value })}>
+                <td data-label="Provider"><select value={d.provider_id} onChange={(e) => set({ provider_id: e.target.value })}>
                   {providers.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
                 </select></td>
-                <td>
+                <td data-label="Path">
                   <div className="row nowrap">
                     <input value={d.path} onChange={(e) => set({ path: e.target.value })} placeholder="/ or secret/path" />
                     <button className="icon-btn" title="Browse the provider" disabled={!d.provider_id} onClick={() => setBrowsing(i)}>
@@ -265,15 +266,15 @@ function MappingsDialog({ credential, onClose }: { credential: Credential; onClo
                     </button>
                   </div>
                 </td>
-                <td><input value={d.key} onChange={(e) => set({ key: e.target.value })} placeholder="(no name)"
+                <td data-label="Key"><input value={d.key} onChange={(e) => set({ key: e.target.value })} placeholder="(no name)"
                            title="Name of the key inside the secret; leave empty for a key without a name" /></td>
-                <td><select value={d.conflict_policy} onChange={(e) => set({ conflict_policy: e.target.value })}>
+                <td data-label="On conflict"><select value={d.conflict_policy} onChange={(e) => set({ conflict_policy: e.target.value })}>
                   <option value="manual">Ask (manual)</option><option value="prefer_remote">Remote wins</option><option value="prefer_local">Local wins</option>
                 </select></td>
-                <td><select value={d.delete_policy} onChange={(e) => set({ delete_policy: e.target.value })}>
+                <td data-label="Remote deleted"><select value={d.delete_policy} onChange={(e) => set({ delete_policy: e.target.value })}>
                   <option value="keep">Keep local</option><option value="clear">Clear local</option>
                 </select></td>
-                <td>
+                <td data-label="Status">
                   {m ? <span className={`badge status-${m.status}`} title={m.message ?? ''}>{m.status}</span> : <span className="muted">new</span>}
                   {m?.status === 'conflict' && (
                     <div className="row small">
@@ -282,7 +283,7 @@ function MappingsDialog({ credential, onClose }: { credential: Credential; onClo
                     </div>
                   )}
                 </td>
-                <td><button className="icon-btn danger" onClick={() => setDraft(draft.filter((_, j) => j !== i))}><Trash size={14} /></button></td>
+                <td className="actions"><button className="icon-btn danger" title="Remove mapping" onClick={() => setDraft(draft.filter((_, j) => j !== i))}><Trash size={14} /></button></td>
               </tr>
             );
           })}
@@ -338,6 +339,7 @@ export function CredentialsView() {
   const { data: folderData } = useCredentialFolders();
   const folders = folderData ?? [];
   const invalidate = useInvalidate();
+  const isMobile = useMediaQuery(MOBILE_QUERY);
   const [q, setQ] = useState('');
   const [folder, setFolder] = useState<FolderSel>('all');
   const [editing, setEditing] = useState<Credential | 'new' | null>(null);
@@ -413,7 +415,16 @@ export function CredentialsView() {
       {error && <div className="banner error">{errorMessage(error)}</div>}
       <div className="cred-layout">
         <aside>
-          <FolderTree folders={folders} selected={folder} onSelect={setFolder} />
+          {isMobile ? (
+            <select className="cred-folder-select" value={folder} onChange={(e) => setFolder(e.target.value)} aria-label="Folder">
+              <option value="all">All credentials</option>
+              <option value="none">No folder</option>
+              {[...folders].sort((a, b) => folderPath(folders, a.id).localeCompare(folderPath(folders, b.id)))
+                .map((f) => <option key={f.id} value={f.id}>{folderPath(folders, f.id)}</option>)}
+            </select>
+          ) : (
+            <FolderTree folders={folders} selected={folder} onSelect={setFolder} />
+          )}
           <div className="row small">
             <button disabled={!canCreate || (current !== null && !folderEditable)} onClick={newFolder} title={current ? 'New sub-folder' : 'New folder'}>
               <FolderPlus size={14} /> Folder</button>
@@ -432,22 +443,23 @@ export function CredentialsView() {
             </div>
           )}
           {isLoading ? <p className="muted">Loading…</p> : (
-            <table className="grid">
+            <table className="grid stack">
               <thead><tr><th>Name</th><th>Username</th><th>Folder</th><th>Secrets</th><th>Used by</th><th>External</th><th>Changed</th><th /></tr></thead>
               <tbody>
                 {items.map((c) => (
                   <tr key={c.id}>
-                    <td><b>{c.name}</b>{c.description && <div className="muted small">{c.description}</div>}</td>
-                    <td>{c.domain ? `${c.domain}\\` : ''}{c.username ?? <span className="muted">—</span>}</td>
-                    <td className="small muted">{c.folder_id ? folderPath(folders, c.folder_id) : '—'}</td>
-                    <td className="small">
+                    <td className="stack-title"><b>{c.name}</b>{c.description && <div className="muted small">{c.description}</div>}</td>
+                    <td data-label="Username">{c.domain ? `${c.domain}\\` : ''}{c.username ?? <span className="muted">—</span>}</td>
+                    <td data-label="Folder" className="small muted">{c.folder_id ? folderPath(folders, c.folder_id) : '—'}</td>
+                    <td data-label="Secrets" className="small">
                       {[c.password_set && 'password', c.private_key_set && 'key', c.passphrase_set && 'passphrase'].filter(Boolean).join(', ') || <span className="muted">none</span>}
                       {Object.keys(c.attributes ?? {}).length > 0 && <div className="muted">{Object.keys(c.attributes).join(', ')}</div>}
                       {c.rotation_due && <span className="badge warn">rotation due</span>}
                     </td>
-                    <td>{c.usage_count}</td>
-                    <td>{c.external_fields.length ? <span className="badge"><Cloud size={11} /> {c.external_fields.join(', ')}</span> : ''}</td>
-                    <td className="small muted">{formatDate(c.secret_changed_at ?? c.updated_at)}</td>
+                    <td data-label="Used by">{c.usage_count}</td>
+                    <td data-label="External" className={c.external_fields.length ? '' : 'stack-empty'}>
+                      {c.external_fields.length ? <span className="badge"><Cloud size={11} /> {c.external_fields.join(', ')}</span> : ''}</td>
+                    <td data-label="Changed" className="small muted">{formatDate(c.secret_changed_at ?? c.updated_at)}</td>
                     <td className="actions">
                       <button className="icon-btn" title="Edit" disabled={!['edit', 'manage'].includes(c.permission ?? '')} onClick={() => setEditing(c)}><Pencil size={14} /></button>
                       <button className="icon-btn" title="Reveal secrets" disabled={c.permission !== 'manage' || !hasPerm(me, 'credentials.reveal')} onClick={() => setRevealing(c)}><Eye size={14} /></button>
