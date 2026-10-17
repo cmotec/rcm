@@ -12,6 +12,8 @@ T = TypeVar("T")
 
 Protocol = Literal["host", "ssh", "sftp", "rdp", "vnc", "ftp", "ftps"]
 AuthMode = Literal["inherit", "direct", "credential", "interactive"]
+PersonalAccountKind = Literal["user", "privileged"]
+PersonalAccountChoice = Literal["any", "user", "privileged"]
 
 # OpenAPI descriptions of the authentication fields (connections, hosts and folders share them).
 AUTH_MODE_DOC = (
@@ -27,6 +29,9 @@ USERNAME_DOC = "auth_mode direct / interactive (pre-fill)"
 PASSWORD_DOC = "auth_mode direct; write-only (responses only say `password_set`); null clears"
 CREDENTIAL_ID_DOC = ("auth_mode credential: the pinned credential-store entry (the caller needs 'connect' on it). "
                      "null = the user chooses at connect time")
+PERSONAL_ACCOUNT_DOC = ("auth_mode credential: log in with the connecting user's own account (Profile → My accounts) "
+                        "instead of a credential-store entry: `user` or `privileged` (that account, no question), "
+                        "`any` (the user picks one of their accounts). Clears credential_id / credential_folder_id")
 PermissionLevel = Literal["view", "connect", "edit", "manage"]
 _HOSTNAME = r"^[A-Za-z0-9_.:\-\[\]%]+$"
 _DOMAIN = r"^[A-Za-z0-9_.\-]+$"
@@ -198,6 +203,7 @@ class FolderBase(Strict):
     credential_id: uuid.UUID | None = Field(None, description=CREDENTIAL_ID_DOC)
     credential_folder_id: uuid.UUID | None = Field(
         None, description="auth_mode credential without credential_id: offer only credentials from this folder")
+    personal_account: PersonalAccountChoice | None = Field(None, description=PERSONAL_ACCOUNT_DOC)
 
 
 class FolderCreate(FolderBase):
@@ -231,6 +237,7 @@ class FolderOut(Out):
     password_set: bool = False
     credential_id: uuid.UUID | None = None
     credential_folder_id: uuid.UUID | None = None
+    personal_account: str | None = None
 
 
 # --------------------------------------------------------------------------- connections
@@ -254,6 +261,7 @@ class ConnectionFields(Strict):
         None, description="field -> {{lookup:<credential name pattern>:<field>}} (see docs/architecture.md)")
     credential_folder_id: uuid.UUID | None = Field(
         None, description="auth_mode credential without credential_id: offer only credentials from this folder")
+    personal_account: PersonalAccountChoice | None = Field(None, description=PERSONAL_ACCOUNT_DOC)
 
     @field_validator("lookups")
     @classmethod
@@ -340,6 +348,7 @@ class ConnectionOut(Out):
     warnings: list[SecurityWarning] = []
     lookups: dict[str, str] = {}
     credential_folder_id: uuid.UUID | None = None
+    personal_account: str | None = None
     # display values of lookup fields (hostname, port, description, …), resolved for the caller
     resolved: dict[str, Any] = {}
 
@@ -543,7 +552,6 @@ class AcceptedHostKey(Strict):
     fingerprint: str = Field(min_length=10, max_length=128)
 
 
-PersonalAccountKind = Literal["user", "privileged"]
 
 
 class AuthOverrideIn(Strict):

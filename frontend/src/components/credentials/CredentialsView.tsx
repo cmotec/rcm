@@ -198,6 +198,54 @@ function CredentialDialog({ credential, all, folders, defaultFolder, onClose }: 
   );
 }
 
+interface CredentialUsage {
+  connections: { id: string; name: string; protocol: string }[];
+  hidden_connections: number;
+  folders?: { id: string; name: string }[];
+  hidden_folders?: number;
+  child_credentials: { id: string; name: string }[];
+}
+
+/** Where a credential is used: connections and folders that pin it, credentials that inherit from it. */
+function UsageDialog({ credential, onClose }: { credential: Credential; onClose: () => void }) {
+  const [usage, setUsage] = useState<CredentialUsage | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    get<CredentialUsage>(`/api/v1/credentials/${credential.id}/usage`).then(setUsage).catch((e) => setError(errorMessage(e)));
+  }, [credential.id]);
+  const hidden = (usage?.hidden_connections ?? 0) + (usage?.hidden_folders ?? 0);
+  const empty = usage && !usage.connections.length && !usage.folders?.length && !usage.child_credentials.length && !hidden;
+  return (
+    <Modal title={`Used by — ${credential.name}`} onClose={onClose} width={480}
+           footer={<button className="primary" onClick={onClose}>Close</button>}>
+      {error && <p className="banner error">{error}</p>}
+      {!usage && !error && <p className="muted">Loading…</p>}
+      {empty && <p className="muted">Not used by any connection.</p>}
+      {usage && usage.connections.length > 0 && (
+        <>
+          <div className="choice-heading">Connections</div>
+          <ul className="usage-list">
+            {usage.connections.map((c) => <li key={c.id}>{c.name} <span className="muted">{c.protocol.toUpperCase()}</span></li>)}
+          </ul>
+        </>
+      )}
+      {usage && (usage.folders?.length ?? 0) > 0 && (
+        <>
+          <div className="choice-heading">Folders (for the connections inside)</div>
+          <ul className="usage-list">{usage.folders!.map((f) => <li key={f.id}><Folder size={13} /> {f.name}</li>)}</ul>
+        </>
+      )}
+      {usage && usage.child_credentials.length > 0 && (
+        <>
+          <div className="choice-heading">Credentials that inherit from it</div>
+          <ul className="usage-list">{usage.child_credentials.map((c) => <li key={c.id}><KeyRound size={13} /> {c.name}</li>)}</ul>
+        </>
+      )}
+      {hidden > 0 && <p className="muted small">{hidden} more you are not allowed to see.</p>}
+    </Modal>
+  );
+}
+
 function RevealDialog({ credential, onClose }: { credential: Credential; onClose: () => void }) {
   const [reason, setReason] = useState('');
   const [values, setValues] = useState<CredentialSecrets | null>(null);
@@ -505,6 +553,7 @@ export function CredentialsView() {
   const [folder, setFolder] = useState<FolderSel>('all');
   const [editing, setEditing] = useState<Credential | 'new' | null>(null);
   const [revealing, setRevealing] = useState<Credential | null>(null);
+  const [usageOf, setUsageOf] = useState<Credential | null>(null);
   const [mapping, setMapping] = useState<Credential | null>(null);
   const [acl, setAcl] = useState<{ type: 'credential' | 'cred_folder'; id: string; name: string } | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -716,7 +765,10 @@ export function CredentialsView() {
                       )}
                       {c.rotation_due && <span className="badge warn">rotation due</span>}
                     </td>
-                    <td data-label="Used by">{c.usage_count}</td>
+                    <td data-label="Used by">
+                      {c.usage_count ? <button className="link-btn" title="Show the connections that use it"
+                                               onClick={() => setUsageOf(c)}>{c.usage_count}</button> : 0}
+                    </td>
                     <td data-label="External" className={c.external_fields.length ? '' : 'stack-empty'}>
                       {c.external_fields.length ? <span className="badge"><Cloud size={11} /> {c.external_fields.join(', ')}</span> : ''}</td>
                     <td data-label="Changed" className="small muted">{formatDate(c.secret_changed_at ?? c.updated_at)}</td>
@@ -738,6 +790,7 @@ export function CredentialsView() {
       {editing && <CredentialDialog credential={editing === 'new' ? undefined : editing} all={data?.items ?? []} folders={folders}
                                     defaultFolder={current?.id ?? null} onClose={() => setEditing(null)} />}
       {revealing && <RevealDialog credential={revealing} onClose={() => setRevealing(null)} />}
+      {usageOf && <UsageDialog credential={usageOf} onClose={() => setUsageOf(null)} />}
       {mapping && <MappingsDialog credential={mapping} onClose={() => { setMapping(null); invalidate.credentials(); }} />}
       {acl && <AclDialog resourceType={acl.type} resourceId={acl.id} name={acl.name} onClose={() => setAcl(null)} />}
       {moving && <MoveDialog count={chosen.length} folders={folders} onClose={() => setMoving(false)}

@@ -26,7 +26,7 @@ export type DialogRequest =
       resolve: (v: InteractiveCredentials | AccountOverride | null) => void }
   | { id: number; kind: 'hostkey'; info: HostKeyInfo; changed: boolean; resolve: (accept: boolean) => void }
   | { id: number; kind: 'choose-credential'; connectionId: string; connectionName: string; protocol: Protocol;
-      folderId?: string | null;
+      folderId?: string | null; accountsOnly?: boolean;
       resolve: (o: AuthOverride | null) => void }
   | { id: number; kind: 'open-with'; connectionId: string; connectionName: string; protocol: Protocol;
       resolve: (o: AuthOverride | null) => void };
@@ -82,8 +82,9 @@ export const dialogs = {
     domain?: string | null }) => enqueue<InteractiveCredentials | AccountOverride | null>({ kind: 'credentials', ...o }),
   hostKey: (info: HostKeyInfo, changed: boolean) => enqueue<boolean>({ kind: 'hostkey', info, changed }),
   /** "Choose at connect time": an entry from the credential store, one of the user's accounts, or typed credentials. */
-  chooseCredential: (connectionId: string, connectionName: string, protocol: Protocol, folderId?: string | null) =>
-    enqueue<AuthOverride | null>({ kind: 'choose-credential', connectionId, connectionName, protocol, folderId }),
+  chooseCredential: (connectionId: string, connectionName: string, protocol: Protocol, folderId?: string | null,
+                     accountsOnly = false) =>
+    enqueue<AuthOverride | null>({ kind: 'choose-credential', connectionId, connectionName, protocol, folderId, accountsOnly }),
   openWith: (connectionId: string, connectionName: string, protocol: Protocol) =>
     enqueue<AuthOverride | null>({ kind: 'open-with', connectionId, connectionName, protocol }),
   contextMenu: (x: number, y: number, items: MenuItem[]) => useDialogStore.setState({ menu: { x, y, items } }),

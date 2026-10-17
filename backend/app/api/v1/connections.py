@@ -53,7 +53,8 @@ def folder_out(f: m.Folder, access: AccessContext) -> FolderOut:
     return out
 
 
-FOLDER_AUTH_FIELDS = ("auth_mode", "username", "domain", "password", "credential_id", "credential_folder_id")
+FOLDER_AUTH_FIELDS = ("auth_mode", "username", "domain", "password", "credential_id", "credential_folder_id",
+                      "personal_account")
 
 
 async def _apply_folder_auth(db: AsyncSession, access: AccessContext, folder: m.Folder, body: FolderBase,
@@ -64,7 +65,7 @@ async def _apply_folder_auth(db: AsyncSession, access: AccessContext, folder: m.
         return False
     if "auth_mode" in fields and body.auth_mode:
         folder.auth_mode = body.auth_mode
-    for name in ("username", "domain", "credential_id", "credential_folder_id"):
+    for name in ("username", "domain", "credential_id", "credential_folder_id", "personal_account"):
         if name in fields:
             setattr(folder, name, getattr(body, name))
     if "password" in fields:
@@ -76,6 +77,11 @@ async def _apply_folder_auth(db: AsyncSession, access: AccessContext, folder: m.
                             folder.credential_folder_id if "credential_folder_id" in fields and mode == "credential"
                             else None)
     # only what the mode uses is kept (as for connections)
+    if mode != "credential":
+        folder.personal_account = None
+    if folder.personal_account:
+        folder.credential_id = None
+        folder.credential_folder_id = None
     if mode != "direct":
         folder.password_enc = None
     if mode != "credential":
@@ -383,6 +389,11 @@ def _apply_password(conn: m.Connection, password: str | None) -> None:
 
 
 def _normalise_auth(conn: m.Connection) -> None:
+    if conn.auth_mode != "credential":
+        conn.personal_account = None
+    if conn.personal_account:  # the connecting user's own account: no credential-store entry
+        conn.credential_id = None
+        conn.credential_folder_id = None
     if conn.auth_mode != "direct":
         conn.password_enc = None
     if conn.auth_mode != "credential":
@@ -437,6 +448,7 @@ async def create_connection(body: ConnectionCreate, request: Request, principal:
         search_domain=body.search_domain, description=body.description, tags=body.tags or [],
         settings=settings_data, sort_order=body.sort_order or 0, owner_id=principal.id,
         lookups=body.lookups or {}, credential_folder_id=body.credential_folder_id,
+        personal_account=body.personal_account,
     )
     _apply_password(conn, body.password)
     _normalise_auth(conn)
@@ -502,6 +514,8 @@ async def update_connection(connection_id: uuid.UUID, body: ConnectionUpdate,
         conn.credential_id = body.credential_id
     if "credential_folder_id" in fields:
         conn.credential_folder_id = body.credential_folder_id
+    if "personal_account" in fields:
+        conn.personal_account = body.personal_account
     if "lookups" in fields:
         conn.lookups = body.lookups or {}
     if "password" in fields:
@@ -595,6 +609,7 @@ async def _clone(db: AsyncSession, src: m.Connection, *, name: str, folder_id: u
         search_domain=src.search_domain, description=src.description, tags=list(src.tags or []),
         settings=dict(src.settings or {}), sort_order=src.sort_order, owner_id=owner_id,
         lookups=dict(src.lookups or {}), credential_folder_id=src.credential_folder_id,
+        personal_account=src.personal_account,
     )
     if src.password_enc:
         plain = box.decrypt(src.password_enc, aad_for("connections", "password", src.id))

@@ -5,6 +5,7 @@ import type { AuthMode, Connection, LookupField } from '../../api/types';
 import { dialogs } from '../../state/dialogs';
 import { Modal } from '../common/Modal';
 import { SearchSelect } from '../common/SearchSelect';
+import { ACCOUNT_CHOICE_OPTIONS, credentialChoiceFields } from './credentialChoice';
 
 const AUTH_LABELS: Record<AuthMode, string> = {
   inherit: 'Inherit (parent connection / folder)',
@@ -68,7 +69,7 @@ export function BulkEditDialog({ connections, onClose }: { connections: Connecti
         }
         if (authMode === 'direct' && password) body.password = password;
         if (authMode === 'credential') {
-          body.credential_id = credentialId || null;
+          Object.assign(body, credentialChoiceFields(credentialId));
           body.credential_folder_id = credentialId ? null : credentialFolderId || null;
         }
         AUTH_FIELDS.forEach((f) => dropLookups.add(f));
@@ -141,7 +142,7 @@ export function BulkEditDialog({ connections, onClose }: { connections: Connecti
             <>
               <label className="field"><span>Credential entry</span>
                 <SearchSelect value={credentialId} onChange={setCredentialId} emptyLabel="Let the user choose when connecting"
-                              placeholder="Search credentials…" options={credentialOptions} />
+                              placeholder="Search credentials…" options={[...ACCOUNT_CHOICE_OPTIONS, ...credentialOptions]} />
               </label>
               {!credentialId && (
                 <label className="field"><span>Offer only credentials from this folder</span>

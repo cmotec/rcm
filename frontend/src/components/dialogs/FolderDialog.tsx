@@ -6,6 +6,7 @@ import { dialogs } from '../../state/dialogs';
 import { FOLDER_COLORS, FOLDER_ICONS } from '../common/icons';
 import { Modal } from '../common/Modal';
 import { SearchSelect } from '../common/SearchSelect';
+import { ACCOUNT_CHOICE_OPTIONS, credentialChoiceFields, credentialChoiceValue, isAccountChoice } from './credentialChoice';
 
 const FOLDER_AUTH_MODES: { value: AuthMode; label: string; help: string }[] = [
   { value: 'inherit', label: 'Inherit', help: 'Use the authentication of the parent folder (if any).' },
@@ -28,7 +29,7 @@ export function FolderDialog({ folder, parentId, onClose }: { folder?: Folder; p
   const [domain, setDomain] = useState(folder?.domain ?? '');
   // null = keep the stored password; '' with a stored one = remove it
   const [password, setPassword] = useState<string | null>(folder?.password_set ? null : '');
-  const [credentialId, setCredentialId] = useState(folder?.credential_id ?? '');
+  const [credentialId, setCredentialId] = useState(credentialChoiceValue(folder?.credential_id, folder?.personal_account));
   const [credentialFolderId, setCredentialFolderId] = useState(folder?.credential_folder_id ?? '');
   const [error, setError] = useState<string | null>(null);
   const credentialOptions = useMemo(() => (creds?.items ?? [])
@@ -54,7 +55,7 @@ export function FolderDialog({ folder, parentId, onClose }: { folder?: Folder; p
     }
     if (authMode === 'direct' && password !== null) body.password = password || null;
     if (authMode === 'credential') {
-      body.credential_id = credentialId || null;
+      Object.assign(body, credentialChoiceFields(credentialId));
       body.credential_folder_id = credentialId ? null : credentialFolderId || null;
     }
     try {
@@ -140,10 +141,11 @@ export function FolderDialog({ folder, parentId, onClose }: { folder?: Folder; p
         {authMode === 'credential' && (
           <label className="field"><span>Credential entry</span>
             <SearchSelect value={credentialId} onChange={setCredentialId} emptyLabel="Let the user choose when connecting"
-                          placeholder="Search credentials…" options={credentialOptions} />
+                          placeholder="Search credentials…" options={[...ACCOUNT_CHOICE_OPTIONS, ...credentialOptions]} />
             <small className="muted">
-              {credentialId ? 'Pinned: connections in this folder start with this credential.'
-                : 'Not pinned: when connecting, users pick from the credentials they are allowed to use.'}
+              {isAccountChoice(credentialId) ? 'The connecting user’s own account (Profile → My accounts).'
+                : credentialId ? 'Pinned: connections in this folder start with this credential.'
+                : 'Not pinned: when connecting, users pick from their accounts and the credentials they are allowed to use.'}
             </small>
           </label>
         )}

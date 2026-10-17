@@ -64,6 +64,7 @@ export interface Folder {
   password_set: boolean;
   credential_id: string | null;
   credential_folder_id: string | null;
+  personal_account: 'any' | 'user' | 'privileged' | null;
 }
 
 export interface SecurityWarning {
@@ -101,6 +102,8 @@ export interface Connection {
   lookups: Partial<Record<LookupField, string>>;
   /** "choose a credential at connect time": only credentials from this credential folder */
   credential_folder_id: string | null;
+  /** auth_mode credential: the connecting user's own account ("any" = the user picks one) */
+  personal_account: 'any' | 'user' | 'privileged' | null;
   /** display values of lookup fields, resolved on the server (hostname, port, description, …) */
   resolved: Partial<Record<LookupField, string>>;
 }

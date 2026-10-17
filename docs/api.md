@@ -122,14 +122,15 @@ connections — and every folder has the same authentication fields. Set them wi
 | `username`, `domain` | `direct`, `interactive` | the login (`interactive`: pre-filled in the prompt) |
 | `password` | `direct` | write-only: responses only show `password_set`. `null` removes it, omitting it (PATCH) keeps it |
 | `credential_id` | `credential` | the pinned credential-store entry; the caller needs *connect* on it |
-| `credential_folder_id` | `credential` without `credential_id` | the user picks a credential when connecting, only from this credential folder (and below) |
+| `credential_folder_id` | `credential` without `credential_id` | the user picks a credential when connecting, only from this credential folder (and below). Credentials that match the connection's host (name or description contains the host name, short host name or description) are accepted from any folder the user may use |
+| `personal_account` | `credential` | log in with the connecting user's own account (Profile → My accounts) instead of a credential-store entry: `user` or `privileged` (that account, no question asked) or `any` (the user picks one of their accounts: `428 credential_choice_required` with `accounts_only: true`). Clears `credential_id` and `credential_folder_id` |
 | `inherit_auth` | connections only | `true` (default): fields that are still empty are filled from the parent connection, then the folder. `false`: nothing is inherited |
 
 | `auth_mode` | The login comes from |
 |---|---|
 | `inherit` | the parent connection (e.g. the host), then the nearest folder whose `auth_mode` is not `inherit` |
 | `direct` | `username` / `domain` / `password` stored on this entry |
-| `credential` | the credential `credential_id`; without one the user chooses at connect time (`POST /sessions` answers `428 credential_choice_required`) |
+| `credential` | the credential `credential_id`, or the user's own account (`personal_account`); otherwise the user chooses at connect time (`POST /sessions` answers `428 credential_choice_required`, then send `credential_id` or `auth_override: {mode: "account", account}`) |
 | `interactive` | typed by the user when connecting, never stored (`428 credentials_required`) |
 
 Rules:
@@ -166,8 +167,11 @@ curl -s -X PATCH "${H[@]}" -d '{"auth_mode":"credential","credential_id":null,
 curl -s -X PATCH "${H[@]}" -d '{"auth_mode":"interactive","username":"operator","version":3}' \
   "$API/connections/<host-id>"
 
+# log in with the connecting user's own privileged account
+curl -s -X PATCH "${H[@]}" -d '{"auth_mode":"credential","personal_account":"privileged","version":4}'   "$API/connections/<host-id>"
+
 # back to inheriting (from the folder)
-curl -s -X PATCH "${H[@]}" -d '{"auth_mode":"inherit","version":4}' "$API/connections/<host-id>"
+curl -s -X PATCH "${H[@]}" -d '{"auth_mode":"inherit","version":5}' "$API/connections/<host-id>"
 
 # a folder login for every inheriting connection inside it
 curl -s -X PATCH "${H[@]}" -d '{"auth_mode":"direct","username":"svc","password":"…","version":1}' \
