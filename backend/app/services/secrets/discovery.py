@@ -149,9 +149,11 @@ def _managed_by(cred: m.Credential, provider: m.SecretProvider, path: str) -> bo
 
 
 async def _used_by(db: AsyncSession, cred_id: uuid.UUID) -> tuple[int, int]:
-    """(connections, credentials) that reference the credential."""
+    """(connections and folders, credentials) that reference the credential."""
     conns = (await db.execute(select(func.count()).select_from(m.Connection)
-                              .where(m.Connection.credential_id == cred_id))).scalar_one()
+                              .where(m.Connection.credential_id == cred_id))).scalar_one() \
+        + (await db.execute(select(func.count()).select_from(m.Folder)
+                            .where(m.Folder.credential_id == cred_id))).scalar_one()
     children = (await db.execute(select(func.count()).select_from(m.Credential)
                                  .where(m.Credential.parent_id == cred_id))).scalar_one()
     return conns, children

@@ -57,6 +57,13 @@ export interface Folder {
   created_at: string;
   updated_at: string;
   permission: PermissionLevel | null;
+  /** login for the connections inside whose authentication inherits */
+  auth_mode: AuthMode;
+  username: string | null;
+  domain: string | null;
+  password_set: boolean;
+  credential_id: string | null;
+  credential_folder_id: string | null;
 }
 
 export interface SecurityWarning {

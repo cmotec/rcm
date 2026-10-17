@@ -321,6 +321,34 @@ def _connection_own(
     return vals
 
 
+def folder_auth(folders: list[m.Folder]) -> m.Folder | None:
+    """The folder whose authentication applies: the nearest one that does not inherit."""
+    for f in folders:
+        if (getattr(f, "auth_mode", None) or "inherit") != "inherit":
+            return f
+    return None
+
+
+def _folder_own(f: m.Folder, credentials: dict[uuid.UUID, list[m.Credential]], box: SecretBox | None,
+                include_secrets: bool, chosen_credential_id: uuid.UUID | None = None) -> dict[str, Resolved]:
+    src = Source("folder", str(f.id), f.name)
+    vals: dict[str, Resolved] = {}
+    if f.auth_mode in ("direct", "interactive"):
+        if f.username:
+            vals["username"] = Resolved(f.username, src)
+        if f.domain:
+            vals["domain"] = Resolved(f.domain, src)
+        if f.auth_mode == "direct" and f.password_enc:
+            value = (box.decrypt(f.password_enc, aad_for("folders", "password", f.id))
+                     if include_secrets and box else None)
+            vals["password"] = Resolved(value, src)
+    elif f.auth_mode == "credential":
+        cred_id = f.credential_id or chosen_credential_id
+        if cred_id:
+            vals.update(credential_values(credentials.get(cred_id, []), box, include_secrets=include_secrets))
+    return vals
+
+
 # --------------------------------------------------------------------------- main entry
 
 
@@ -343,11 +371,13 @@ async def resolve_connection(
     for conn in chain:
         if conn.auth_mode == "credential" and conn.credential_id and conn.credential_id not in credentials:
             credentials[conn.credential_id] = await load_credential_chain(db, conn.credential_id)
-    for extra in (chosen_credential_id, auth_override.credential_id if auth_override else None):
-        if extra and extra not in credentials:
-            credentials[extra] = await load_credential_chain(db, extra)
     top = chain[-1]
     folders = await load_folder_chain(db, top.folder_id)
+    auth_folder = folder_auth(folders)
+    for extra in (chosen_credential_id, auth_override.credential_id if auth_override else None,
+                  auth_folder.credential_id if auth_folder and auth_folder.auth_mode == "credential" else None):
+        if extra and extra not in credentials:
+            credentials[extra] = await load_credential_chain(db, extra)
     lookups, lookup_errors = await resolve_lookups(
         db, chain, folders, env_search_domains, box=box, include_secrets=include_secrets,
         credential_filter=credential_filter,
@@ -566,6 +596,7 @@ def compute_effective(
     choice_folder: uuid.UUID | None = None
     auth_errors: dict[str, str] = {}
     interactive = {k: v for k, v in (interactive or {}).items() if k in AUTH_FIELDS and v}
+    reached_top = True  # the whole chain inherits: the folder's authentication can fill in
     for idx, c in enumerate(chain):
         choose_here = c.auth_mode == "credential" and not c.credential_id and choice_conn is None
         if choose_here:
@@ -583,7 +614,30 @@ def compute_effective(
                 r.inherited = r.inherited or idx > 0
                 auth[k] = r
         if not c.inherit_auth:
+            reached_top = False
             break
+
+    # Folder authentication (nearest folder that does not inherit). Fixed values (its own username /
+    # password, a pinned credential) fill fields that are still missing. Asking at connect time
+    # (prompt, or choosing a credential) only happens when the connections have no secret of their own.
+    f = folder_auth(folders) if reached_top else None
+    if f is not None:
+        has_secret = any(k in auth for k in ("password", "private_key"))
+        asks = f.auth_mode == "interactive" or (f.auth_mode == "credential" and not f.credential_id)
+        if not asks or (not has_secret and interactive_conn is None and choice_conn is None):
+            choose_here = f.auth_mode == "credential" and not f.credential_id
+            if choose_here:
+                choice_conn = conn.id
+                choice_folder = f.credential_folder_id
+            own = _folder_own(f, credentials, box, include_secrets, chosen_credential_id if choose_here else None)
+            if f.auth_mode == "interactive":
+                interactive_conn = conn.id
+                for k, v in interactive.items():
+                    own[k] = Resolved(v, Source("interactive", str(conn.id), "entered at launch"))
+            for k, r in own.items():
+                if k not in auth:
+                    r.inherited = True
+                    auth[k] = r
 
     if auth_override is not None:
         # Different credentials for this session only: nothing from the configured authentication is

@@ -252,6 +252,12 @@ For each field the first non-empty value wins, in this order:
 2. The connection's own values for its `auth_mode`.
 3. If `inherit_auth` is true (the default): the parent connection's effective
    value, using the same algorithm recursively.
+4. If the whole chain inherits (every connection up to the top has `inherit_auth`): the folder's
+   authentication. Folders have the same `auth_mode`s; the nearest folder (the top connection's
+   folder, then its parents) whose mode is not `inherit` is used. Its username / domain / password,
+   or its pinned credential, fill the fields that are still empty (source `folder`). "Ask when
+   connecting" and "choose a credential" on a folder only apply when the connections supplied no
+   password and no private key, so a connection's own login is never interrupted by a folder prompt.
 
 If `inherit_auth` is false the connection is fully independent. Credential
 entries have the same parent rule (`parent_id`): an empty field falls back to

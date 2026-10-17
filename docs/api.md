@@ -43,7 +43,7 @@ The complete, generated specification is in [openapi.json](openapi.json)
 |---|---|---|
 | GET | `/tree` | all folders and connections visible to the caller (flat lists) |
 | GET/POST | `/folders` | list / create |
-| GET/PATCH/DELETE | `/folders/{id}` | get / update (rename, move via `parent_id`, icon, colour, search domain) / delete (`?recursive=true`) |
+| GET/PATCH/DELETE | `/folders/{id}` | get / update (rename, move via `parent_id`, icon, colour, search domain, authentication: `auth_mode`, `username`, `domain`, `password` (write-only), `credential_id`, `credential_folder_id`) / delete (`?recursive=true`) |
 | GET | `/connections` | list & search (`q`, `protocol`, `folder_id`, `parent_id`, `tag`, `favorite`, paging) |
 | POST | `/connections` | create (`folder_id` or `parent_id`, protocol settings, auth mode, …) |
 | GET/PATCH/DELETE | `/connections/{id}` | get / update / delete (`?recursive=true` for children) |

@@ -174,6 +174,14 @@ class FolderBase(Strict):
     description: str | None = Field(None, max_length=10000)
     search_domain: str | None = Field(None, max_length=253, pattern=_DOMAIN)
     sort_order: int | None = None
+    # authentication for the connections inside whose own authentication inherits
+    auth_mode: AuthMode | None = None
+    username: str | None = Field(None, max_length=255)
+    domain: str | None = Field(None, max_length=255)
+    password: str | None = Field(None, max_length=4096, description="write-only; null clears")
+    credential_id: uuid.UUID | None = None
+    credential_folder_id: uuid.UUID | None = Field(
+        None, description="auth_mode credential without credential_id: offer only credentials from this folder")
 
 
 class FolderCreate(FolderBase):
@@ -201,6 +209,12 @@ class FolderOut(Out):
     created_at: datetime
     updated_at: datetime
     permission: str | None = None
+    auth_mode: str = "inherit"
+    username: str | None = None
+    domain: str | None = None
+    password_set: bool = False
+    credential_id: uuid.UUID | None = None
+    credential_folder_id: uuid.UUID | None = None
 
 
 # --------------------------------------------------------------------------- connections

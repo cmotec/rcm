@@ -293,3 +293,21 @@ def test_bulk_move_and_delete_credentials(admin: UserClient) -> None:
     assert [(f["id"], f["name"]) for f in r["failed"]] == [(used["id"], "bulk used")]
     assert "referenced" in r["failed"][0]["error"]
     assert admin.get(f"/api/v1/credentials/{parent['id']}").status_code == 404
+
+
+def test_folder_authentication_is_inherited(admin: UserClient) -> None:
+    r = admin.post("/api/v1/folders", json={"name": "auth folder", "auth_mode": "direct", "username": "fadmin",
+                                            "domain": "CORP", "password": "folder-secret"})
+    assert r.status_code == 201, r.text
+    f = r.json()
+    assert f["auth_mode"] == "direct" and f["password_set"] is True and "folder-secret" not in r.text
+    c = admin.post("/api/v1/connections", json={"name": "in auth folder", "protocol": "rdp", "hostname": "h",
+                                                "folder_id": f["id"]}).json()
+    e = admin.get(f"/api/v1/connections/{c['id']}/effective").json()
+    assert e["auth"]["username"]["value"] == "fadmin" and e["auth"]["username"]["source"]["kind"] == "folder"
+    assert e["auth"]["password"]["set"] is True and e["auth"]["password"]["inherited"] is True
+
+    # switching the mode drops what the new mode does not use
+    r = admin.patch(f"/api/v1/folders/{f['id']}", json={"auth_mode": "interactive", "version": f["version"]})
+    assert r.json()["password_set"] is False and r.json()["username"] == "fadmin"
+    assert admin.post("/api/v1/sessions", json={"connection_id": c["id"]}).json()["code"] == "credentials_required"

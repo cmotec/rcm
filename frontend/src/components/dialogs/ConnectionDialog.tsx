@@ -15,7 +15,7 @@ interface Props {
 }
 
 const AUTH_MODES: { value: AuthMode; label: string; help: string }[] = [
-  { value: 'inherit', label: 'Inherit', help: 'Use the credentials of the parent connection.' },
+  { value: 'inherit', label: 'Inherit', help: 'Use the credentials of the parent connection, or of the folder.' },
   { value: 'direct', label: 'Connection-specific', help: 'Username, password and domain stored on this connection.' },
   { value: 'credential', label: 'Credential store', help: 'A fixed entry from the credential store, or let the user pick one when connecting.' },
   { value: 'interactive', label: 'Ask when connecting', help: 'Prompt for username and password; nothing is stored.' },
@@ -390,7 +390,7 @@ export function ConnectionDialog({ connection, placement, onClose }: Props) {
           )}
           <label className="check">
             <input type="checkbox" checked={inheritAuth} onChange={(e) => setInheritAuth(e.target.checked)} />
-            <span>Fill missing fields from the parent connection</span>
+            <span>Fill missing fields from the parent connection or folder</span>
             <small className="muted">Turn off for fully independent authentication.</small>
           </label>
           {(effective || inherited) && (
