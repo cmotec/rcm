@@ -205,7 +205,9 @@ class Folder(TimestampMixin, Base):
     __tablename__ = "folders"
     __table_args__ = (
         CheckConstraint("parent_id IS NULL OR parent_id <> id", name="not_own_parent"),
+        CheckConstraint(_in("auth_mode", AUTH_MODES), name="auth_mode"),
         Index("ix_folders_parent", "parent_id"),
+        Index("ix_folders_credential", "credential_id"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
@@ -218,6 +220,16 @@ class Folder(TimestampMixin, Base):
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
     owner_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     version: Mapped[int] = mapped_column(Integer, default=1)
+    # Authentication for the connections inside (and in sub-folders) whose own authentication inherits;
+    # same modes as connections. "inherit" = take it from the parent folder.
+    auth_mode: Mapped[str] = mapped_column(String(16), default="inherit", server_default="inherit")
+    username: Mapped[str | None] = mapped_column(String(255))
+    domain: Mapped[str | None] = mapped_column(String(255))
+    password_enc: Mapped[bytes | None] = mapped_column(LargeBinary)
+    credential_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("credentials.id", ondelete="RESTRICT"))
+    credential_folder_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("credential_folders.id", ondelete="SET NULL")
+    )
 
 
 class Connection(TimestampMixin, Base):

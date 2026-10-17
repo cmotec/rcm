@@ -293,3 +293,43 @@ def test_bulk_move_and_delete_credentials(admin: UserClient) -> None:
     assert [(f["id"], f["name"]) for f in r["failed"]] == [(used["id"], "bulk used")]
     assert "referenced" in r["failed"][0]["error"]
     assert admin.get(f"/api/v1/credentials/{parent['id']}").status_code == 404
+
+
+def test_folder_authentication_is_inherited(admin: UserClient) -> None:
+    r = admin.post("/api/v1/folders", json={"name": "auth folder", "auth_mode": "direct", "username": "fadmin",
+                                            "domain": "CORP", "password": "folder-secret"})
+    assert r.status_code == 201, r.text
+    f = r.json()
+    assert f["auth_mode"] == "direct" and f["password_set"] is True and "folder-secret" not in r.text
+    c = admin.post("/api/v1/connections", json={"name": "in auth folder", "protocol": "rdp", "hostname": "h",
+                                                "folder_id": f["id"]}).json()
+    e = admin.get(f"/api/v1/connections/{c['id']}/effective").json()
+    assert e["auth"]["username"]["value"] == "fadmin" and e["auth"]["username"]["source"]["kind"] == "folder"
+    assert e["auth"]["password"]["set"] is True and e["auth"]["password"]["inherited"] is True
+
+    # switching the mode drops what the new mode does not use
+    r = admin.patch(f"/api/v1/folders/{f['id']}", json={"auth_mode": "interactive", "version": f["version"]})
+    assert r.json()["password_set"] is False and r.json()["username"] == "fadmin"
+    assert admin.post("/api/v1/sessions", json={"connection_id": c["id"]}).json()["code"] == "credentials_required"
+
+
+def test_copy_connection_to_another_host(admin: UserClient) -> None:
+    host_a = admin.post("/api/v1/connections", json={"name": "host A", "protocol": "host", "hostname": "a.example",
+                                                     "auth_mode": "direct", "username": "ua", "password": "pa"}).json()
+    host_b = admin.post("/api/v1/connections", json={"name": "host B", "protocol": "host", "hostname": "b.example",
+                                                     "auth_mode": "direct", "username": "ub", "password": "pb"}).json()
+    ftp = admin.post("/api/v1/connections", json={"name": "FTP", "protocol": "ftp", "parent_id": host_a["id"]}).json()
+
+    r = admin.post(f"/api/v1/connections/{ftp['id']}/duplicate", json={"parent_id": host_b["id"]})
+    assert r.status_code == 201, r.text
+    copy = r.json()
+    assert copy["name"] == "FTP" and copy["parent_id"] == host_b["id"] and copy["auth_mode"] == "inherit"
+    # the copy inherits from its new host
+    e = admin.get(f"/api/v1/connections/{copy['id']}/effective").json()
+    assert e["hostname"]["value"] == "b.example" and e["auth"]["username"]["value"] == "ub"
+    # next to the original it is marked as a copy; a host cannot be copied with its children into itself
+    assert admin.post(f"/api/v1/connections/{ftp['id']}/duplicate", json={}).json()["name"] == "FTP (copy)"
+    r = admin.post(f"/api/v1/connections/{host_a['id']}/duplicate", json={"parent_id": ftp["id"], "include_children": True})
+    assert r.status_code == 422
+    r = admin.post(f"/api/v1/connections/{ftp['id']}/duplicate", json={"parent_id": host_b["id"], "root": True})
+    assert r.status_code == 422

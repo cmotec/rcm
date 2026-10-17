@@ -580,3 +580,34 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; user-sel
   .cred-table .check-col { width: auto; text-align: left; }
   .cred-table .check-col input { width: 20px; height: 20px; }
 }
+
+/* credential choice: matching credentials in their own list above the others */
+.choice-heading { margin: 10px 0 0; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em;
+  color: var(--text-muted); }
+.choice-heading + .choice-list { margin-top: 4px; }
+
+/* Touch devices: iOS Safari zooms into any text field with a font below 16px when it gets the focus. */
+@media (pointer: coarse) {
+  input, select, textarea, .mono input, .mono textarea, input.mono, textarea.mono, .fb-path input { font-size: 16px; }
+}
+
+/* SearchSelect: a select with a search field */
+.search-select { position: relative; min-width: 0; }
+.search-select-input { display: flex; align-items: center; gap: 4px; border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--bg-elev); padding-right: 6px; }
+.search-select-input:focus-within { outline: 2px solid var(--accent); outline-offset: -1px; }
+.search-select-input input { flex: 1; border: 0; background: none; outline: none; min-width: 0; }
+.search-select-input .icon-btn { padding: 2px; }
+.search-select-list { position: absolute; z-index: 50; left: 0; right: 0; top: calc(100% + 2px); max-height: 260px; overflow: auto;
+  margin: 0; padding: 4px 0; list-style: none; background: var(--bg-elev); border: 1px solid var(--border);
+  border-radius: var(--radius); box-shadow: var(--shadow); }
+.search-select-list li { padding: 5px 10px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.search-select-list li.active { background: var(--bg-hover); }
+.search-select-list li.chosen { font-weight: 600; }
+.search-select-list li.no-hit { cursor: default; }
+
+/* bulk edit of connections: one tick per field, its input below */
+.bulk-toggle { margin-top: 10px; }
+.bulk-fields { margin: 4px 0 4px 26px; display: flex; flex-direction: column; gap: 6px; }
+.bulk-list { margin-top: 14px; }
+.bulk-list ul { margin: 6px 0 0; padding-left: 18px; max-height: 160px; overflow: auto; font-size: 12px; }

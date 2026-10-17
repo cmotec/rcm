@@ -21,7 +21,8 @@ import { AdminView } from './components/admin/AdminView';
 import { DialogHost } from './components/common/DialogHost';
 import { CredentialsView } from './components/credentials/CredentialsView';
 import { DetailsPanel } from './components/DetailsPanel';
-import { AclDialog } from './components/dialogs/AclDialog';
+import { AclDialog, type AclTarget } from './components/dialogs/AclDialog';
+import { BulkEditDialog } from './components/dialogs/BulkEditDialog';
 import { ConnectionDialog } from './components/dialogs/ConnectionDialog';
 import { FolderDialog } from './components/dialogs/FolderDialog';
 import { LoginPage } from './components/LoginPage';
@@ -73,6 +74,8 @@ function Shell() {
   const [connDialog, setConnDialog] = useState<{ connection?: Connection; placement?: { folderId?: string | null; parentId?: string | null } } | null>(null);
   const [folderDialog, setFolderDialog] = useState<{ folder?: Folder; parentId?: string | null } | null>(null);
   const [acl, setAcl] = useState<{ type: 'folder' | 'connection'; id: string; name: string } | null>(null);
+  const [bulkAcl, setBulkAcl] = useState<AclTarget[] | null>(null);
+  const [bulkEdit, setBulkEdit] = useState<Connection[] | null>(null);
   const [tokens, setTokens] = useState(false);
   const [profile, setProfile] = useState(false);
   useEffect(() => syncAppFullscreen(), []);
@@ -80,7 +83,8 @@ function Shell() {
   const [restoreOffer, setRestoreOffer] = useState<number>(0);
   const isMobile = useMediaQuery(MOBILE_QUERY);
   // Left menu: hidden while sessions are open (fullscreen workspace), toggled from the toolbar.
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  // Phones: closed until the menu button is pressed.
+  const [sidebarOpen, setSidebarOpen] = useState(() => !window.matchMedia(MOBILE_QUERY).matches);
   const sessionCount = useWorkspace((s) => Object.keys(s.sessions).length);
   const banner = useQuery({ queryKey: ['app-settings'], queryFn: () => get<{ values: { banner_message?: string | null } }>('/api/v1/settings') });
   const started = useRef(false);
@@ -104,8 +108,8 @@ function Shell() {
   useEffect(() => startLayoutPersistence(), []);
 
   // When a session opens, the details panel hides (all screen sizes) and, on phones only, the left
-  // menu too (fullscreen session). Both return once all sessions are closed. On desktop the left
-  // menu stays as the user set it. The toolbar toggles still work in between.
+  // menu too (fullscreen session). The details panel returns once all sessions are closed; on phones
+  // the left menu only opens from the menu button. On desktop it stays as the user set it.
   const prevSessionCount = useRef(sessionCount);
   useEffect(() => {
     if (sessionCount > prevSessionCount.current) {
@@ -113,15 +117,11 @@ function Shell() {
       if (isMobile) setSidebarOpen(false);
     } else if (sessionCount === 0 && prevSessionCount.current > 0) {
       setShowDetails(true);
-      if (isMobile) setSidebarOpen(true);
     }
     prevSessionCount.current = sessionCount;
   }, [sessionCount, isMobile]);
 
-  const goToWorkspace = () => {
-    setView('workspace');
-    if (isMobile && sessionCount === 0) setSidebarOpen(true);
-  };
+  const goToWorkspace = () => setView('workspace');
 
   // keep the selected connection fresh after tree reloads
   useEffect(() => {
@@ -222,6 +222,8 @@ function Shell() {
             newFolder: (parentId) => setFolderDialog({ parentId }),
             editFolder: (folder) => setFolderDialog({ folder }),
             permissions: (type, id, name) => setAcl({ type, id, name }),
+            bulkEdit: setBulkEdit,
+            bulkPermissions: setBulkAcl,
             select: setSelected,
             selectedId: selected?.id ?? null,
           }} />
@@ -247,6 +249,9 @@ function Shell() {
       {connDialog && <ConnectionDialog {...connDialog} onClose={() => { setConnDialog(null); void qc.invalidateQueries({ queryKey: keys.tree }); }} />}
       {folderDialog && <FolderDialog {...folderDialog} onClose={() => setFolderDialog(null)} />}
       {acl && <AclDialog resourceType={acl.type} resourceId={acl.id} name={acl.name} onClose={() => setAcl(null)} />}
+      {bulkAcl && <AclDialog resourceType={bulkAcl[0].resourceType} resourceId={bulkAcl[0].resourceId} name={bulkAcl[0].name}
+                             bulk={bulkAcl} onClose={() => setBulkAcl(null)} />}
+      {bulkEdit && <BulkEditDialog connections={bulkEdit} onClose={() => setBulkEdit(null)} />}
       {tokens && <TokensDialog onClose={() => setTokens(false)} />}
       {profile && <ProfileDialog me={me} onClose={() => setProfile(false)} />}
     </div>

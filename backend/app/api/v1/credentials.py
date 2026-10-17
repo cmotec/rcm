@@ -58,7 +58,9 @@ def _key_fingerprint(private_key: str | None, passphrase: str | None) -> str | N
 async def credential_out(db: AsyncSession, c: m.Credential, access: AccessContext) -> CredentialOut:
     mapped = (await db.execute(select(m.SecretMapping.field).where(m.SecretMapping.credential_id == c.id))).scalars()
     usage = (await db.execute(select(func.count()).select_from(m.Connection)
-                              .where(m.Connection.credential_id == c.id))).scalar_one()
+                              .where(m.Connection.credential_id == c.id))).scalar_one() \
+        + (await db.execute(select(func.count()).select_from(m.Folder)
+                            .where(m.Folder.credential_id == c.id))).scalar_one()
     rotation_due = bool(
         c.rotation_interval_days
         and (c.secret_changed_at or c.created_at) + timedelta(days=c.rotation_interval_days) < now()
@@ -257,11 +259,13 @@ async def _delete_one(db: AsyncSession, principal: Principal, credential_id: uui
     cred = await _get(db, principal.access, credential_id, "manage")
     used = (await db.execute(select(func.count()).select_from(m.Connection)
                              .where(m.Connection.credential_id == cred.id))).scalar_one()
+    folders = (await db.execute(select(func.count()).select_from(m.Folder)
+                                .where(m.Folder.credential_id == cred.id))).scalar_one()
     children = (await db.execute(select(func.count()).select_from(m.Credential)
                                  .where(m.Credential.parent_id == cred.id))).scalar_one()
-    if used or children:
-        raise Conflict(f"credential is referenced by {used} connection(s) and {children} credential(s)",
-                       code="in_use")
+    if used or folders or children:
+        raise Conflict(f"credential is referenced by {used} connection(s), {folders} folder(s) and "
+                       f"{children} credential(s)", code="in_use")
     await db.delete(cred)
     await audit.record(db, "credential.delete", actor_id=principal.id, actor_name=principal.name,
                        resource_type="credential", resource_id=credential_id, details={"name": cred.name})
@@ -374,10 +378,14 @@ async def credential_usage(credential_id: uuid.UUID, principal: Principal = Depe
                               .where(m.Connection.credential_id == credential_id))).all()
     children = (await db.execute(select(m.Credential.id, m.Credential.name)
                                  .where(m.Credential.parent_id == credential_id))).all()
+    folders = (await db.execute(select(m.Folder.id, m.Folder.name)
+                                .where(m.Folder.credential_id == credential_id))).all()
     return {
         "connections": [{"id": str(c.id), "name": c.name, "protocol": c.protocol}
                         for c in conns if access.can("connection", c.id, "view")],
         "hidden_connections": sum(1 for c in conns if not access.can("connection", c.id, "view")),
+        "folders": [{"id": str(f.id), "name": f.name} for f in folders if access.can("folder", f.id, "view")],
+        "hidden_folders": sum(1 for f in folders if not access.can("folder", f.id, "view")),
         "child_credentials": [{"id": str(c.id), "name": c.name} for c in children
                               if access.can("credential", c.id, "view")],
     }

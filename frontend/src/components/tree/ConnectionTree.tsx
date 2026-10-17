@@ -8,6 +8,7 @@ import { dialogs } from '../../state/dialogs';
 import { connectionLabel, useTreePrefs } from '../../state/treePrefs';
 import { useWorkspace } from '../../state/workspace';
 import { FolderGlyph, ProtocolIcon } from '../common/icons';
+import type { AclTarget } from '../dialogs/AclDialog';
 import { type TreeNode, buildTree, filterTree } from './buildTree';
 
 import { CONNECTION_MIME } from '../../workspace/useSession';
@@ -20,11 +21,17 @@ export interface TreeActions {
   newFolder: (parentId: string | null) => void;
   editFolder: (f: Folder) => void;
   permissions: (type: 'folder' | 'connection', id: string, name: string) => void;
+  /** several selected rows */
+  bulkEdit: (connections: Connection[]) => void;
+  bulkPermissions: (targets: AclTarget[]) => void;
   select: (c: Connection | null) => void;
   selectedId: string | null;
 }
 
 const keyOf = (n: TreeNode) => `${n.type}:${n.id}`;
+
+/** Connections copied with Ctrl/⌘+C, pasted with Ctrl/⌘+V. */
+let copiedConnections: string[] = [];
 
 function loadExpanded(): Set<string> {
   try {
@@ -95,7 +102,7 @@ export function ConnectionTree({ actions, tapToOpen = false }: { actions: TreeAc
   /** "Open with different credentials…": typed credentials or another credential-store entry, this session only. */
   const openWith = async (c: Connection) => {
     const name = label(c).primary;
-    const override = await dialogs.openWith(name, c.protocol);
+    const override = await dialogs.openWith(c.id, name, c.protocol);
     if (override) void openConnection({ ...c, name }, { authOverride: override });
   };
 
@@ -155,6 +162,51 @@ export function ConnectionTree({ actions, tapToOpen = false }: { actions: TreeAc
     if (mode === 'float') void openConnection(ref, { floating: { x: 60, y: 40, w: 960, h: 620 } });
     else if (mode === 'split' && focusedSession) void openConnection(ref, { splitWith: { sessionId: focusedSession, edge: 'right' } });
     else void openConnection(ref);
+  };
+
+  /** Open several connections: tabs, floating windows (staggered) or side by side in a split. */
+  const openMany = async (list: Connection[], mode: 'tab' | 'float' | 'split') => {
+    let previous = mode === 'split' ? focusedSession : null;
+    for (const [i, c] of list.entries()) {
+      const ref = { ...c, name: label(c).primary };
+      if (mode === 'float') void openConnection(ref, { floating: { x: 60 + i * 32, y: 40 + i * 32, w: 960, h: 620 } });
+      else if (mode === 'tab') void openConnection(ref);
+      else {
+        const id = await openConnection(ref, previous ? { splitWith: { sessionId: previous, edge: 'right' } } : {});
+        if (id) previous = id;
+      }
+    }
+  };
+
+  const openManyWith = async (list: Connection[]) => {
+    const name = `${list.length} connections`;
+    const protocol = list.some((c) => c.protocol === 'rdp') ? 'rdp' : list[0].protocol;
+    const override = await dialogs.openWith(list[0].id, name, protocol);
+    if (override) list.forEach((c) => void openConnection({ ...c, name: label(c).primary }, { authOverride: override }));
+  };
+
+  /** Selected connections, plus (with ``withFolders``) every connection inside the selected folders. */
+  const selectedConnections = (withFolders: boolean): Connection[] => {
+    if (!tree) return [];
+    const ids = new Set([...selection].filter((k) => k.startsWith('connection:')).map((k) => k.split(':')[1]));
+    if (withFolders) {
+      const folderIds = new Set([...selection].filter((k) => k.startsWith('folder:')).map((k) => k.split(':')[1]));
+      for (let grew = true; grew;) {
+        grew = false;
+        for (const f of tree.folders) {
+          if (f.parent_id && folderIds.has(f.parent_id) && !folderIds.has(f.id)) { folderIds.add(f.id); grew = true; }
+        }
+      }
+      const inside = new Set(tree.connections.filter((c) => c.folder_id && folderIds.has(c.folder_id)).map((c) => c.id));
+      for (let grew = true; grew;) {
+        grew = false;
+        for (const c of tree.connections) {
+          if (c.parent_id && inside.has(c.parent_id) && !inside.has(c.id)) { inside.add(c.id); grew = true; }
+        }
+      }
+      inside.forEach((id) => ids.add(id));
+    }
+    return tree.connections.filter((c) => ids.has(c.id));
   };
 
   const deleteConnection = async (c: Connection, hasChildren: boolean) => {
@@ -274,7 +326,36 @@ export function ConnectionTree({ actions, tapToOpen = false }: { actions: TreeAc
     } else if (e.key.toLowerCase() === 'a' && (e.ctrlKey || e.metaKey)) {
       e.preventDefault();
       setSelection(new Set(visibleOrder));
+    } else if (e.key.toLowerCase() === 'c' && (e.ctrlKey || e.metaKey)) {
+      const ids = [...selection].filter((k) => k.startsWith('connection:')).map((k) => k.split(':')[1]);
+      if (!ids.length) return;
+      e.preventDefault();
+      copiedConnections = ids;
+      dialogs.toast(`Copied ${ids.length} connection${ids.length === 1 ? '' : 's'}`, 'info');
+    } else if (e.key.toLowerCase() === 'v' && (e.ctrlKey || e.metaKey) && copiedConnections.length) {
+      e.preventDefault();
+      void paste();
     }
+  };
+
+  /** Paste the copied connections: into the selected folder, under the selected connection, or at the top
+   * level. The server names a copy "… (copy)" only when it lands next to its original. */
+  const paste = async () => {
+    if (!tree) return;
+    const [type, id] = selection.size === 1 ? [...selection][0].split(':') : [];
+    const target = type === 'folder' ? { folder_id: id } : type === 'connection' ? { parent_id: id } : { root: true };
+    const failures: string[] = [];
+    for (const src of copiedConnections) {
+      const include_children = tree.connections.some((c) => c.parent_id === src);
+      try {
+        await post(`/api/v1/connections/${src}/duplicate`, { ...target, include_children });
+      } catch (err) {
+        failures.push(`${tree.connections.find((c) => c.id === src)?.name ?? src}: ${errorMessage(err)}`);
+      }
+    }
+    invalidate.tree();
+    if (id) setExpanded((s) => new Set([...s, id]));
+    if (failures.length) dialogs.toast(`Could not paste: ${failures.join('; ')}`, 'error');
   };
 
   const onDropOn = async (e: React.DragEvent, target: TreeNode | null) => {
@@ -312,7 +393,27 @@ export function ConnectionTree({ actions, tapToOpen = false }: { actions: TreeAc
     const showMenu = (x: number, y: number) => {
       const key = keyOf(n);
       if (selection.has(key) && selection.size > 1) {
+        const launchable = selectedConnections(false)
+          .filter((c) => c.protocol !== 'host' && ['connect', 'edit', 'manage'].includes(c.permission ?? ''));
+        const editable = selectedConnections(true).filter((c) => ['edit', 'manage'].includes(c.permission ?? ''));
+        const aclTargets: AclTarget[] = [...selection].flatMap((k) => {
+          const [type, id] = k.split(':');
+          const item = type === 'folder' ? tree?.folders.find((f) => f.id === id) : tree?.connections.find((c) => c.id === id);
+          return item && item.permission === 'manage'
+            ? [{ resourceType: type as 'folder' | 'connection', resourceId: id, name: item.name }] : [];
+        });
+        const n = launchable.length;
         dialogs.contextMenu(x, y, [
+          { label: `Open ${n} connection${n === 1 ? '' : 's'}`, disabled: !n, action: () => void openMany(launchable, 'tab') },
+          { label: 'Open with different credentials…', disabled: !n, action: () => void openManyWith(launchable) },
+          { label: 'Open in floating windows', disabled: !n, action: () => void openMany(launchable, 'float') },
+          { label: 'Open in split view', disabled: !n, action: () => void openMany(launchable, 'split') },
+          { separator: true, label: '' },
+          { label: `Edit ${editable.length} connection${editable.length === 1 ? '' : 's'}…`, disabled: !editable.length,
+            action: () => actions.bulkEdit(editable) },
+          { label: `Permissions (${aclTargets.length} item${aclTargets.length === 1 ? '' : 's'})…`, disabled: !aclTargets.length,
+            action: () => actions.bulkPermissions(aclTargets) },
+          { separator: true, label: '' },
           { label: `Delete ${selection.size} selected items…`, danger: true, action: () => void deleteMany([...selection]) },
           { label: 'Clear selection', action: () => setSelection(new Set()) },
         ]);

@@ -147,3 +147,64 @@ def test_secrets_are_not_resolved_without_include_secrets() -> None:
     assert pub["auth"]["password"] == {"source": {"kind": "connection", "id": str(c.id), "name": "c"},
                                        "inherited": False, "set": True}
     assert "pw" not in str(pub)
+
+
+# --------------------------------------------------------------------------- folder authentication
+
+
+def folder(name: str, parent: m.Folder | None = None, **kw: object) -> m.Folder:
+    f = m.Folder(id=uuid.uuid4(), name=name, parent_id=parent.id if parent else None,
+                 auth_mode=kw.pop("auth_mode", "inherit"), **kw)
+    return f
+
+
+def test_inheriting_connection_takes_the_folder_login() -> None:
+    top = folder("Servers", auth_mode="direct", username="admin", domain="CORP")
+    top.password_enc = BOX.encrypt("folder-pw", aad_for("folders", "password", top.id))
+    sub = folder("Linux", top)  # inherits from its parent folder
+    c = conn("srv", hostname="srv", folder_id=sub.id)
+    e = eff([c], folders=[sub, top])
+    assert e.value("username") == "admin" and e.value("password") == "folder-pw" and e.value("domain") == "CORP"
+    assert e.auth["password"].source.kind == "folder" and e.auth["password"].source.name == "Servers"
+    assert e.auth["password"].inherited
+
+    # the connection's own values win; the folder fills what is missing
+    own = conn("own", auth_mode="direct", username="root")
+    e = eff([own], folders=[sub, top])
+    assert e.value("username") == "root" and e.value("password") == "folder-pw"
+    # not inheriting: nothing from the folder
+    alone = conn("alone", auth_mode="direct", username="root", inherit_auth=False)
+    assert eff([alone], folders=[sub, top]).value("password") is None
+    # a parent connection with its own login comes first
+    parent = with_password(conn("parent", "host", auth_mode="direct", username="p"), "parent-pw")
+    child = conn("child", parent_id=parent.id)
+    assert eff([child, parent], folders=[top]).value("password") == "parent-pw"
+
+
+def test_folder_credential_pinned_or_chosen() -> None:
+    store = cred("svc", username="svc", password="svc-pw")
+    pinned = folder("Pinned", auth_mode="credential", credential_id=store.id)
+    e = eff([conn("a")], creds={store.id: [store]}, folders=[pinned])
+    assert e.value("username") == "svc" and e.value("password") == "svc-pw"
+    assert e.auth["password"].source.kind == "credential"
+
+    choose = folder("Choose", auth_mode="credential")
+    c = conn("b")
+    e = eff([c], folders=[choose])
+    assert e.credential_choice_required and e.credential_choice_connection_id == c.id
+    e = compute_effective([c], {store.id: [store]}, [choose], box=BOX, include_secrets=True, env_search_domains=[],
+                          chosen_credential_id=store.id)
+    assert not e.credential_choice_required and e.value("password") == "svc-pw"
+
+
+def test_folder_prompt_only_when_the_connection_has_no_secret() -> None:
+    ask = folder("Ask", auth_mode="interactive", username="operator")
+    c = conn("c")
+    e = eff([c], folders=[ask])
+    assert e.prompt_required and e.value("username") == "operator"
+    e = eff([c], folders=[ask], interactive={"password": "typed"})
+    assert not e.prompt_required and e.value("password") == "typed"
+    # a connection with its own password is not interrupted by the folder's prompt
+    own = with_password(conn("own", auth_mode="direct", username="root"), "own-pw")
+    e = eff([own], folders=[ask])
+    assert not e.prompt_required and e.value("password") == "own-pw"

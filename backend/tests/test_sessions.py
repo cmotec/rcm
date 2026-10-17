@@ -174,6 +174,11 @@ def test_ssh_host_key_confirmation_and_terminal(admin: UserClient, ssh_conn: dic
             tail.append(msg)
         assert any(m.get("text") and json.loads(m["text"]).get("type") == "exit" for m in tail)
     assert "hello world" in ssh_server.commands
+    # `exit` ends the session on the server too: nothing left to reconnect to
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline and admin.post(f"/api/v1/sessions/{s['id']}/reconnect").status_code != 404:
+        time.sleep(0.1)
+    assert admin.post(f"/api/v1/sessions/{s['id']}/reconnect").status_code == 404
 
 
 def test_ssh_wrong_password_reports_error(admin: UserClient, ssh_conn: dict, ssh_server) -> None:  # noqa: ANN001

@@ -43,7 +43,7 @@ The complete, generated specification is in [openapi.json](openapi.json)
 |---|---|---|
 | GET | `/tree` | all folders and connections visible to the caller (flat lists) |
 | GET/POST | `/folders` | list / create |
-| GET/PATCH/DELETE | `/folders/{id}` | get / update (rename, move via `parent_id`, icon, colour, search domain) / delete (`?recursive=true`) |
+| GET/PATCH/DELETE | `/folders/{id}` | get / update (rename, move via `parent_id`, icon, colour, search domain, authentication: `auth_mode`, `username`, `domain`, `password` (write-only), `credential_id`, `credential_folder_id`) / delete (`?recursive=true`) |
 | GET | `/connections` | list & search (`q`, `protocol`, `folder_id`, `parent_id`, `tag`, `favorite`, paging) |
 | POST | `/connections` | create (`folder_id` or `parent_id`, protocol settings, auth mode, …) |
 | GET/PATCH/DELETE | `/connections/{id}` | get / update / delete (`?recursive=true` for children) |
@@ -109,6 +109,73 @@ The complete, generated specification is in [openapi.json](openapi.json)
 | POST | `/imports/{id}/apply` | selective import |
 | GET | `/system/info` | version, feature flags |
 | GET | `/healthz`, `/readyz` | probes (also under `/api/`) |
+
+## Authentication of connections, hosts and folders
+
+Every connection — including `host` entries, which only carry shared values for their child
+connections — and every folder has the same authentication fields. Set them with `POST` (create) or
+`PATCH` (change) on `/connections` or `/folders`.
+
+| Field | Used with | Meaning |
+|---|---|---|
+| `auth_mode` | – | `inherit` (default), `direct`, `credential` or `interactive`, see below |
+| `username`, `domain` | `direct`, `interactive` | the login (`interactive`: pre-filled in the prompt) |
+| `password` | `direct` | write-only: responses only show `password_set`. `null` removes it, omitting it (PATCH) keeps it |
+| `credential_id` | `credential` | the pinned credential-store entry; the caller needs *connect* on it |
+| `credential_folder_id` | `credential` without `credential_id` | the user picks a credential when connecting, only from this credential folder (and below) |
+| `inherit_auth` | connections only | `true` (default): fields that are still empty are filled from the parent connection, then the folder. `false`: nothing is inherited |
+
+| `auth_mode` | The login comes from |
+|---|---|
+| `inherit` | the parent connection (e.g. the host), then the nearest folder whose `auth_mode` is not `inherit` |
+| `direct` | `username` / `domain` / `password` stored on this entry |
+| `credential` | the credential `credential_id`; without one the user chooses at connect time (`POST /sessions` answers `428 credential_choice_required`) |
+| `interactive` | typed by the user when connecting, never stored (`428 credentials_required`) |
+
+Rules:
+
+* Fields the mode does not use are cleared when saving (e.g. switching to `credential` removes a
+  stored password and username).
+* Resolution, per field: the connection's own value, then the parent connection's (if
+  `inherit_auth`), then the folder's. A folder's `interactive` / "choose a credential" only applies
+  when the connection has no password or key of its own.
+* `GET /connections/{id}/effective` shows the result, each field with its `source`
+  (`connection`, `credential`, `folder`, `lookup`, …) and whether it is `inherited`.
+* Instead of a value, `username` / `domain` / `password` can be a lookup into the credential store:
+  send `lookups: {"username": "{{lookup:{hostname}_root:username}}"}` (see docs/architecture.md).
+
+Examples (`T` = API token, `API` = `https://…/api/v1`):
+
+```bash
+H=(-H "Authorization: Bearer $T" -H 'Content-Type: application/json')
+
+# a host with its own login; its child connections (auth_mode inherit) use it
+curl -s "${H[@]}" -d '{"name":"web01","protocol":"host","hostname":"web01.corp",
+  "auth_mode":"direct","username":"admin","domain":"CORP","password":"…"}' "$API/connections"
+curl -s "${H[@]}" -d '{"name":"web01 RDP","protocol":"rdp","parent_id":"<host-id>"}' "$API/connections"
+
+# switch the host to a credential-store entry (send the current version)
+curl -s -X PATCH "${H[@]}" -d '{"auth_mode":"credential","credential_id":"<credential-id>","version":1}' \
+  "$API/connections/<host-id>"
+
+# let users pick a credential from one credential folder when they connect
+curl -s -X PATCH "${H[@]}" -d '{"auth_mode":"credential","credential_id":null,
+  "credential_folder_id":"<credential-folder-id>","version":2}' "$API/connections/<host-id>"
+
+# ask for the password when connecting, username pre-filled
+curl -s -X PATCH "${H[@]}" -d '{"auth_mode":"interactive","username":"operator","version":3}' \
+  "$API/connections/<host-id>"
+
+# back to inheriting (from the folder)
+curl -s -X PATCH "${H[@]}" -d '{"auth_mode":"inherit","version":4}' "$API/connections/<host-id>"
+
+# a folder login for every inheriting connection inside it
+curl -s -X PATCH "${H[@]}" -d '{"auth_mode":"direct","username":"svc","password":"…","version":1}' \
+  "$API/folders/<folder-id>"
+
+# check what a connection will use
+curl -s "${H[@]}" "$API/connections/<id>/effective"
+```
 
 ## Example (curl)
 

@@ -21,6 +21,7 @@ from app.schemas.core import (
     ConnectionMove,
     ConnectionOut,
     ConnectionUpdate,
+    FolderBase,
     FolderCreate,
     FolderOut,
     FolderUpdate,
@@ -48,7 +49,43 @@ CONN_SIMPLE_FIELDS = ("hostname", "port", "username", "domain", "search_domain",
 def folder_out(f: m.Folder, access: AccessContext) -> FolderOut:
     out = FolderOut.model_validate(f)
     out.permission = LEVEL_NAMES.get(access.level_of("folder", f.id)) or None
+    out.password_set = f.password_enc is not None
     return out
+
+
+FOLDER_AUTH_FIELDS = ("auth_mode", "username", "domain", "password", "credential_id", "credential_folder_id")
+
+
+async def _apply_folder_auth(db: AsyncSession, access: AccessContext, folder: m.Folder, body: FolderBase,
+                             fields: set[str]) -> bool:
+    """Authentication settings of a folder (same modes and rules as a connection's). True if changed."""
+    touched = fields & set(FOLDER_AUTH_FIELDS)
+    if not touched:
+        return False
+    if "auth_mode" in fields and body.auth_mode:
+        folder.auth_mode = body.auth_mode
+    for name in ("username", "domain", "credential_id", "credential_folder_id"):
+        if name in fields:
+            setattr(folder, name, getattr(body, name))
+    if "password" in fields:
+        folder.password_enc = get_box().encrypt(body.password, aad_for("folders", "password", folder.id)) \
+            if body.password else None
+    mode = folder.auth_mode
+    await _check_references(db, access, {},
+                            folder.credential_id if "credential_id" in fields and mode == "credential" else None,
+                            folder.credential_folder_id if "credential_folder_id" in fields and mode == "credential"
+                            else None)
+    # only what the mode uses is kept (as for connections)
+    if mode != "direct":
+        folder.password_enc = None
+    if mode != "credential":
+        folder.credential_id = None
+    if mode != "credential" or folder.credential_id is not None:
+        folder.credential_folder_id = None
+    if mode in ("inherit", "credential"):
+        folder.username = None
+        folder.domain = None
+    return True
 
 
 def connection_out(c: m.Connection, access: AccessContext, runtime: RuntimeSettings,
@@ -190,9 +227,11 @@ async def create_folder(body: FolderCreate, request: Request, principal: Princip
     if idem.replay:
         return idem.replay
     folder = m.Folder(
-        name=body.name, parent_id=body.parent_id, icon=body.icon, color=body.color, description=body.description,
-        search_domain=body.search_domain, sort_order=body.sort_order or 0, owner_id=principal.id,
+        id=uuid.uuid4(), name=body.name, parent_id=body.parent_id, icon=body.icon, color=body.color,
+        description=body.description, search_domain=body.search_domain, sort_order=body.sort_order or 0,
+        owner_id=principal.id, auth_mode="inherit",
     )
+    await _apply_folder_auth(db, access, folder, body, body.model_fields_set)
     db.add(folder)
     await db.flush()
     await db.refresh(folder)
@@ -233,12 +272,13 @@ async def update_folder(folder_id: uuid.UUID, body: FolderUpdate, principal: Pri
             if name in ("name", "sort_order") and value is None:
                 continue
             setattr(folder, name, value)
+    await _apply_folder_auth(db, access, folder, body, fields)
     folder.version += 1
     await db.flush()
     await db.refresh(folder)
     await audit.record(db, "folder.update", actor_id=principal.id, actor_name=principal.name,
                        resource_type="folder", resource_id=folder.id,
-                       details={"fields": sorted(fields - {"version"})})
+                       details={"fields": sorted(fields - {"version"}), "password_changed": "password" in fields})
     access.invalidate()
     await access.load(db)
     return folder_out(folder, access)
@@ -576,18 +616,33 @@ async def duplicate_connection(connection_id: uuid.UUID, body: ConnectionDuplica
                                settings: Settings = Depends(settings_dep)):
     access = principal.access
     src = await _get_connection(db, access, connection_id, "edit")
-    if src.parent_id:
-        access.ensure("connection", src.parent_id, "edit")
-    elif not access.can_create_in_folder(src.folder_id, Perm.CONNECTIONS_CREATE):
-        raise Forbidden("not allowed to create connections here")
-    new = await _clone(db, src, name=body.name or f"{src.name} (copy)", folder_id=src.folder_id,
-                       parent_id=src.parent_id, owner_id=principal.id, include_children=body.include_children)
+    if sum(1 for t in (body.folder_id, body.parent_id, body.root or None) if t) > 1:
+        raise ValidationFailed("set at most one of folder_id, parent_id and root")
+    elsewhere = bool(body.folder_id or body.parent_id or body.root)
+    folder_id, parent_id = (body.folder_id, body.parent_id) if elsewhere else (src.folder_id, src.parent_id)
+    if parent_id:
+        await _get_connection(db, access, parent_id, "edit")
+        if not access.has(Perm.CONNECTIONS_CREATE):
+            raise Forbidden("missing permission 'connections.create'")
+        if body.include_children and await would_create_cycle(db, m.Connection, src.id, parent_id):
+            raise ValidationFailed("a connection cannot be copied with its children into itself or a descendant")
+    else:
+        if folder_id:
+            await _get_folder(db, access, folder_id, "view")
+        if not access.can_create_in_folder(folder_id, Perm.CONNECTIONS_CREATE):
+            raise Forbidden("not allowed to create connections here")
+    same_place = (folder_id, parent_id) == (src.folder_id, src.parent_id)
+    new = await _clone(db, src, name=body.name or (f"{src.name} (copy)" if same_place else src.name),
+                       folder_id=folder_id, parent_id=parent_id, owner_id=principal.id,
+                       include_children=body.include_children)
     await db.refresh(new)
     access.invalidate()
     await access.load(db)
     await audit.record(db, "connection.duplicate", actor_id=principal.id, actor_name=principal.name,
                        resource_type="connection", resource_id=new.id,
-                       details={"source": str(src.id), "include_children": body.include_children})
+                       details={"source": str(src.id), "include_children": body.include_children,
+                                "folder_id": str(folder_id) if folder_id else None,
+                                "parent_id": str(parent_id) if parent_id else None})
     return connection_out(new, access, await get_runtime(db, settings))
 
 
