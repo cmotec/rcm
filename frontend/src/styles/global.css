@@ -585,3 +585,8 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; user-sel
 .choice-heading { margin: 10px 0 0; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em;
   color: var(--text-muted); }
 .choice-heading + .choice-list { margin-top: 4px; }
+
+/* Touch devices: iOS Safari zooms into any text field with a font below 16px when it gets the focus. */
+@media (pointer: coarse) {
+  input, select, textarea, .mono input, .mono textarea, input.mono, textarea.mono, .fb-path input { font-size: 16px; }
+}
