@@ -119,6 +119,7 @@ function CredentialDialog({ credential, all, folders, defaultFolder, onClose }: 
         <div className="span2"><SecretInput label="SSH private key" multiline isSet={Boolean(credential?.private_key_set)} value={secrets.private_key}
                                             onChange={(v) => setSecrets({ ...secrets, private_key: v })} /></div>
         {credential?.private_key_fingerprint && <div className="span2 muted mono">Key fingerprint: {credential.private_key_fingerprint}</div>}
+        <small className="span2 muted">SSH / SFTP: with a private key, the key is tried first; the password is the fallback.</small>
         <div className="span2"><SecretInput label="Private key passphrase" isSet={Boolean(credential?.passphrase_set)} value={secrets.passphrase}
                                             onChange={(v) => setSecrets({ ...secrets, passphrase: v })} /></div>
         <label className="field"><span>Inherit missing fields from</span>

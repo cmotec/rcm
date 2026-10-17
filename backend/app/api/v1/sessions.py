@@ -37,7 +37,7 @@ from app.services.sessions.files.opener import open_fs
 from app.services.sessions.guac_tunnel import parse_client_info, run_guac_tunnel
 from app.services.sessions.launch import build_launch, user_keyboard_layout
 from app.services.sessions.manager import KIND_BY_PROTOCOL, Session, get_manager
-from app.services.sessions.ssh_native import HostKeyDecision, preflight
+from app.services.sessions.ssh_native import HostKeyDecision, choose_guacd_ssh_auth, preflight
 from app.services.sessions.terminal import run_terminal
 
 log = get_logger(__name__)
@@ -184,6 +184,9 @@ async def create_session(body: SessionCreate, request: Request, principal: Princ
             await preflight(db, launch, decision, settings, user_id=principal.id, user_name=principal.name)
         if launch.tunnel_via is not None:
             await preflight(db, launch.tunnel_via, decision, settings, user_id=principal.id, user_name=principal.name)
+        if kind == "guac" and launch.protocol == "ssh":
+            # guacd has no password fallback once it has a key: settle key or password here
+            await choose_guacd_ssh_auth(db, launch, settings)
         await db.commit()
 
         session = Session(
