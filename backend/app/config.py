@@ -52,7 +52,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=None, case_sensitive=True, extra="ignore")
 
     # --- application -------------------------------------------------------
-    APP_URL: str = "http://localhost:8080"
+    APP_URL: str = "https://localhost:8443"
     ENVIRONMENT: Literal["production", "development", "test"] = "production"
     LOG_LEVEL: str = "INFO"
     LOG_FORMAT: Literal["json", "console"] = "json"

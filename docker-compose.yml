@@ -44,11 +44,8 @@ services:
       # self-signed one for the APP_URL host name is created there (docs/deployment.md, "TLS").
       APP_URL: ${APP_URL:-}
       TLS_SELF_SIGNED_NAME: ${TLS_SELF_SIGNED_NAME:-}
-      # redirect: HTTP -> HTTPS. serve: plain HTTP on HTTP_PORT for a TLS-terminating reverse proxy.
-      HTTP_MODE: ${HTTP_MODE:-redirect}
-      PUBLIC_HTTPS_PORT: ${HTTPS_PORT:-8443}
     ports:
-      - "${HTTP_BIND:-0.0.0.0}:${HTTP_PORT:-8080}:8080"
+      # HTTPS only (no plain-HTTP port)
       - "${HTTP_BIND:-0.0.0.0}:${HTTPS_PORT:-8443}:8443"
     volumes:
       # a named volume by default; set TLS_CERT_DIR to a host directory (e.g. /srv/rcm/certs) to manage

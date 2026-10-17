@@ -5,8 +5,6 @@
 # Otherwise a self-signed certificate for the APP_URL host name (or TLS_SELF_SIGNED_NAME) is created
 # and kept in /etc/nginx/certs (self-signed.crt/.key), so it stays the same across restarts; it is
 # renewed 30 days before it expires. nginx reads /tmp/tls/tls.crt and tls.key (links to the chosen pair).
-#
-# HTTP_MODE: redirect (default; HTTP -> HTTPS) or serve (plain HTTP for a reverse proxy in front).
 set -eu
 
 CERT_DIR=/etc/nginx/certs
@@ -68,16 +66,3 @@ else
     echo "tls: self-signed, $(openssl x509 -noout -fingerprint -sha256 -in "$dir/self-signed.crt")"
     echo "tls: put tls.crt (full chain) and tls.key into $CERT_DIR to use your own certificate"
 fi
-
-case "${HTTP_MODE:-redirect}" in
-    serve)
-        printf 'include /etc/nginx/templates/app-locations.inc;\n' > "$OUT/http.inc"
-        echo "tls: HTTP on 8080 serves the app (HTTP_MODE=serve)"
-        ;;
-    *)
-        port="${PUBLIC_HTTPS_PORT:-443}"
-        if [ "$port" = "443" ]; then suffix=""; else suffix=":$port"; fi
-        printf 'location / { return 301 https://$host%s$request_uri; }\n' "$suffix" > "$OUT/http.inc"
-        echo "tls: HTTP on 8080 redirects to HTTPS (port $port)"
-        ;;
-esac

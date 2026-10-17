@@ -4,7 +4,7 @@
 
 | Container | Image | Purpose | Exposed |
 |---|---|---|---|
-| `web` | `remote-connections-manager-web`, from `frontend/` (nginx-unprivileged) | serves the SPA over HTTPS, reverse-proxies `/api` (incl. WebSockets) | `HTTPS_PORT` (default 8443), `HTTP_PORT` (default 8080, redirects to HTTPS) |
+| `web` | `remote-connections-manager-web`, from `frontend/` (nginx-unprivileged) | serves the SPA over HTTPS, reverse-proxies `/api` (incl. WebSockets) | `HTTPS_PORT` (default 8443; HTTPS only, no HTTP port) |
 | `api` | `remote-connections-manager-api`, from `backend/` (python:3.12-slim, uid 10001) | REST API, WebSocket tunnels, SSH/SFTP/FTP, secret sync | internal only |
 | `guacd` | `remote-connections-manager-guacd`, from `guacd/` (`guacamole/guacd:1.6.0` + data directories owned by guacd, uid 1000) | RDP/VNC (and optional SSH) protocol gateway | **never published** |
 
@@ -151,15 +151,13 @@ Users without any mapped role are refused (`OIDC_DEFAULT_ROLE=none`).
 
 ## 5. TLS
 
-The web container always serves HTTPS (container port 8443, published as `HTTPS_PORT`, default
-8443). Plain HTTP (container port 8080, published as `HTTP_PORT`) only redirects to HTTPS unless
-`HTTP_MODE=serve` is set.
+The web container serves HTTPS only (container port 8443, published as `HTTPS_PORT`, default
+8443). There is no plain-HTTP port and no redirect: open `https://…` directly.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `HTTPS_PORT` | `8443` | published HTTPS port; also used in the HTTP → HTTPS redirect |
-| `HTTP_PORT` | `8080` | published HTTP port |
-| `HTTP_MODE` | `redirect` | `redirect`: HTTP answers with a 301 to HTTPS. `serve`: HTTP serves the app (for a TLS-terminating reverse proxy in front) |
+| `HTTPS_PORT` | `8443` | published HTTPS port |
+| `HTTP_BIND` | `0.0.0.0` | address the port is published on (`127.0.0.1`: only a reverse proxy on the same host) |
 | `TLS_CERT_DIR` | volume `web-certs` | certificate directory, mounted at `/etc/nginx/certs` |
 | `TLS_SELF_SIGNED_NAME` | host of `APP_URL` | name (CN/SAN) of the generated self-signed certificate |
 
@@ -214,15 +212,14 @@ Removing `tls.crt`/`tls.key` and restarting falls back to the self-signed certif
 ### Behind a reverse proxy
 
 A reverse proxy (Traefik, Caddy, Nginx Proxy Manager, HAProxy, …) can still terminate TLS in
-front. Either
+front: forward to the HTTPS port (`https://web:8443`, or the published port) and skip certificate
+verification for that hop, or trust the self-signed certificate. The traffic stays encrypted up to
+the container.
 
-* forward to the HTTPS port (`https://web:8443`) and skip certificate verification for that hop
-  (or trust the self-signed certificate): the traffic stays encrypted up to the container, or
-* set `HTTP_MODE=serve` and forward to the HTTP port (only on a trusted network).
-
-In both cases: keep the `Host` header, allow WebSocket upgrades, use long read timeouts (≥ 1 h,
-remote sessions are long-lived WebSockets), and set `APP_URL` to the URL of the proxy. If the
-HTTPS port is not needed, bind it to localhost only or remove the mapping.
+Keep the `Host` header, allow WebSocket upgrades, use long read timeouts (≥ 1 h, remote sessions
+are long-lived WebSockets), and set `APP_URL` to the URL of the proxy. If only the proxy needs the
+port, publish it on localhost (`HTTP_BIND=127.0.0.1`) or remove the mapping when the proxy is on
+the same Docker network.
 
 ## 6. Trust stores
 
