@@ -26,6 +26,9 @@ export interface TreeActions {
 
 const keyOf = (n: TreeNode) => `${n.type}:${n.id}`;
 
+/** Connections copied with Ctrl/⌘+C, pasted with Ctrl/⌘+V. */
+let copiedConnections: string[] = [];
+
 function loadExpanded(): Set<string> {
   try {
     return new Set(JSON.parse(localStorage.getItem('tree.expanded') ?? '[]') as string[]);
@@ -274,7 +277,36 @@ export function ConnectionTree({ actions, tapToOpen = false }: { actions: TreeAc
     } else if (e.key.toLowerCase() === 'a' && (e.ctrlKey || e.metaKey)) {
       e.preventDefault();
       setSelection(new Set(visibleOrder));
+    } else if (e.key.toLowerCase() === 'c' && (e.ctrlKey || e.metaKey)) {
+      const ids = [...selection].filter((k) => k.startsWith('connection:')).map((k) => k.split(':')[1]);
+      if (!ids.length) return;
+      e.preventDefault();
+      copiedConnections = ids;
+      dialogs.toast(`Copied ${ids.length} connection${ids.length === 1 ? '' : 's'}`, 'info');
+    } else if (e.key.toLowerCase() === 'v' && (e.ctrlKey || e.metaKey) && copiedConnections.length) {
+      e.preventDefault();
+      void paste();
     }
+  };
+
+  /** Paste the copied connections: into the selected folder, under the selected connection, or at the top
+   * level. The server names a copy "… (copy)" only when it lands next to its original. */
+  const paste = async () => {
+    if (!tree) return;
+    const [type, id] = selection.size === 1 ? [...selection][0].split(':') : [];
+    const target = type === 'folder' ? { folder_id: id } : type === 'connection' ? { parent_id: id } : { root: true };
+    const failures: string[] = [];
+    for (const src of copiedConnections) {
+      const include_children = tree.connections.some((c) => c.parent_id === src);
+      try {
+        await post(`/api/v1/connections/${src}/duplicate`, { ...target, include_children });
+      } catch (err) {
+        failures.push(`${tree.connections.find((c) => c.id === src)?.name ?? src}: ${errorMessage(err)}`);
+      }
+    }
+    invalidate.tree();
+    if (id) setExpanded((s) => new Set([...s, id]));
+    if (failures.length) dialogs.toast(`Could not paste: ${failures.join('; ')}`, 'error');
   };
 
   const onDropOn = async (e: React.DragEvent, target: TreeNode | null) => {

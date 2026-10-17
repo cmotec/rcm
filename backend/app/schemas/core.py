@@ -285,6 +285,10 @@ class ConnectionMove(Strict):
 class ConnectionDuplicate(Strict):
     name: str | None = Field(None, min_length=1, max_length=255)
     include_children: bool = False
+    # Where the copy goes (at most one). None of them: next to the original.
+    folder_id: uuid.UUID | None = Field(None, description="copy into this folder")
+    parent_id: uuid.UUID | None = Field(None, description="copy under this connection (e.g. another host)")
+    root: bool = Field(False, description="copy to the top level")
 
 
 class SecurityWarning(BaseModel):
