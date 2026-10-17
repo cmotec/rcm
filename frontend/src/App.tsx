@@ -80,7 +80,8 @@ function Shell() {
   const [restoreOffer, setRestoreOffer] = useState<number>(0);
   const isMobile = useMediaQuery(MOBILE_QUERY);
   // Left menu: hidden while sessions are open (fullscreen workspace), toggled from the toolbar.
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  // Phones: closed until the menu button is pressed.
+  const [sidebarOpen, setSidebarOpen] = useState(() => !window.matchMedia(MOBILE_QUERY).matches);
   const sessionCount = useWorkspace((s) => Object.keys(s.sessions).length);
   const banner = useQuery({ queryKey: ['app-settings'], queryFn: () => get<{ values: { banner_message?: string | null } }>('/api/v1/settings') });
   const started = useRef(false);
@@ -104,8 +105,8 @@ function Shell() {
   useEffect(() => startLayoutPersistence(), []);
 
   // When a session opens, the details panel hides (all screen sizes) and, on phones only, the left
-  // menu too (fullscreen session). Both return once all sessions are closed. On desktop the left
-  // menu stays as the user set it. The toolbar toggles still work in between.
+  // menu too (fullscreen session). The details panel returns once all sessions are closed; on phones
+  // the left menu only opens from the menu button. On desktop it stays as the user set it.
   const prevSessionCount = useRef(sessionCount);
   useEffect(() => {
     if (sessionCount > prevSessionCount.current) {
@@ -113,15 +114,11 @@ function Shell() {
       if (isMobile) setSidebarOpen(false);
     } else if (sessionCount === 0 && prevSessionCount.current > 0) {
       setShowDetails(true);
-      if (isMobile) setSidebarOpen(true);
     }
     prevSessionCount.current = sessionCount;
   }, [sessionCount, isMobile]);
 
-  const goToWorkspace = () => {
-    setView('workspace');
-    if (isMobile && sessionCount === 0) setSidebarOpen(true);
-  };
+  const goToWorkspace = () => setView('workspace');
 
   // keep the selected connection fresh after tree reloads
   useEffect(() => {
