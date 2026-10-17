@@ -134,7 +134,10 @@ export class TerminalSession extends BaseSession implements SpecialKeyTarget {
         term.write(`\r\n\x1b[31m${fatal}\x1b[0m\r\n`);
         if (msg.code === 'remote_auth_failed' || msg.code?.startsWith('hostkey')) this.setStatus('error', fatal);
       } else if (msg.type === 'exit') {
+        // the remote shell ended (`exit`, logout): close the session, never reconnect
         exited = true;
+        this.stopHeartbeat();
+        window.setTimeout(() => this.ended('Remote shell exited'), 0);
         term.write(`\r\n\x1b[90m[session ended${msg.status !== null && msg.status !== undefined ? ` with status ${msg.status}` : ''}]\x1b[0m\r\n`);
       }
     };

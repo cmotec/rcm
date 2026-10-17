@@ -1,4 +1,4 @@
-import { del, post } from '../api/client';
+import { ApiError, del, post } from '../api/client';
 import type { SessionInfo } from '../api/types';
 
 export type SessionStatus = 'connecting' | 'connected' | 'reconnecting' | 'disconnected' | 'error' | 'closed';
@@ -110,7 +110,9 @@ export abstract class BaseSession {
       if (fresh.ticket) this.connectWithTicket(fresh.ticket);
       else this.setStatus('connected');
     } catch (err) {
-      this.setStatus('error', err instanceof Error ? err.message : String(err));
+      // the session no longer exists on the server (e.g. the shell was exited): close, do not retry
+      if (err instanceof ApiError && err.status === 404) this.ended('The session has ended');
+      else this.setStatus('error', err instanceof Error ? err.message : String(err));
     }
   }
 

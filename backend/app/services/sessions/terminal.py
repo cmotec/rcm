@@ -52,6 +52,7 @@ async def run_terminal(ws: WebSocket, session: Session, manager: SessionManager,
 
     manager.begin_attach(session, detach)
     error: str | None = None
+    shell_exited = False  # the remote shell ended: the session is over, not waiting for a reconnect
     try:
         await ws.send_text(json.dumps({"type": "status", "state": "connecting"}))
         async with session_scope() as db:
@@ -66,8 +67,13 @@ async def run_terminal(ws: WebSocket, session: Session, manager: SessionManager,
         )
         await manager.mark_connected(session)
         await ws.send_text(json.dumps({"type": "status", "state": "connected"}))
-        await _relay(ws, process, session, stop)
-        if process.exit_status is not None or process.exit_signal is not None:
+        remote_ended = await _relay(ws, process, session, stop)
+        if remote_ended:
+            # The shell's output ended (e.g. `exit`); the exit status follows shortly after the EOF.
+            with contextlib.suppress(asyncio.TimeoutError, Exception):
+                await asyncio.wait_for(process.wait_closed(), 3)
+        if remote_ended or process.exit_status is not None or process.exit_signal is not None:
+            shell_exited = True
             with contextlib.suppress(Exception):
                 await ws.send_text(json.dumps({"type": "exit", "status": process.exit_status}))
     except AppError as exc:
@@ -97,6 +103,8 @@ async def run_terminal(ws: WebSocket, session: Session, manager: SessionManager,
                 if ws.application_state != WebSocketState.DISCONNECTED:
                     await ws.close(code=1000)
             await manager.end_attach(session, error=error)
+            if shell_exited:
+                await manager.close(session, "remote_exit")
 
         with contextlib.suppress(asyncio.CancelledError, Exception):
             await asyncio.shield(cleanup())
@@ -108,7 +116,8 @@ async def _send_error(ws: WebSocket, code: str, message: str) -> None:
 
 
 async def _relay(ws: WebSocket, process: asyncssh.SSHClientProcess, session: Session,  # type: ignore[type-arg]
-                 stop: asyncio.Event) -> None:
+                 stop: asyncio.Event) -> bool:
+    """Relay until one side ends. True if the remote side ended (shell output closed)."""
     async def upstream() -> None:
         while True:
             data = await process.stdout.read(65536)
@@ -139,14 +148,15 @@ async def _relay(ws: WebSocket, process: asyncssh.SSHClientProcess, session: Ses
             elif kind == "ping":
                 await ws.send_text(json.dumps({"type": "pong"}))
 
-    tasks = [asyncio.create_task(upstream()), asyncio.create_task(downstream()),
-             asyncio.create_task(stop.wait())]
+    up = asyncio.create_task(upstream())
+    tasks = [up, asyncio.create_task(downstream()), asyncio.create_task(stop.wait())]
     try:
         done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
         for t in done:
             exc = t.exception()
             if exc and not isinstance(exc, (WebSocketDisconnect, ConnectionError, asyncssh.Error)):
                 raise exc
+        return up in done and up.exception() is None
     finally:
         for t in tasks:
             t.cancel()
