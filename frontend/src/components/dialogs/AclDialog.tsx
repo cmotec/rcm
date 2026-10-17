@@ -19,12 +19,23 @@ const LEVELS: { value: PermissionLevel; label: string }[] = [
   { value: 'manage', label: 'Manage (incl. delete & permissions)' },
 ];
 
-export function AclDialog({ resourceType, resourceId, name, onClose }: {
-  resourceType: 'folder' | 'connection' | 'credential' | 'cred_folder';
+type ResourceType = 'folder' | 'connection' | 'credential' | 'cred_folder';
+
+/** Several items at once (bulk): the grants are added to each one, existing grants stay. */
+export interface AclTarget {
+  resourceType: ResourceType;
   resourceId: string;
   name: string;
+}
+
+export function AclDialog({ resourceType, resourceId, name, bulk, onClose }: {
+  resourceType: ResourceType;
+  resourceId: string;
+  name: string;
+  bulk?: AclTarget[];
   onClose: () => void;
 }) {
+  const many = Boolean(bulk && bulk.length > 1);
   const [rows, setRows] = useState<Row[]>([]);
   const [roles, setRoles] = useState<Role[]>([]);
   const [groups, setGroups] = useState<{ id: string; name: string }[]>([]);
@@ -33,10 +44,12 @@ export function AclDialog({ resourceType, resourceId, name, onClose }: {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    get<AclEntry[]>(`/api/v1/acl/${resourceType}/${resourceId}`).then((list) => setRows(list.map((e) => ({ ...e })))).catch((e) => setError(errorMessage(e)));
+    if (!many) {
+      get<AclEntry[]>(`/api/v1/acl/${resourceType}/${resourceId}`).then((list) => setRows(list.map((e) => ({ ...e })))).catch((e) => setError(errorMessage(e)));
+    }
     get<Role[]>('/api/v1/roles').then(setRoles).catch(() => undefined);
     get<{ id: string; name: string }[]>('/api/v1/groups').then(setGroups).catch(() => undefined);
-  }, [resourceType, resourceId]);
+  }, [resourceType, resourceId, many]);
 
   useEffect(() => {
     if (userQuery.trim().length < 2) {
@@ -56,6 +69,10 @@ export function AclDialog({ resourceType, resourceId, name, onClose }: {
   };
 
   const save = async () => {
+    if (many) {
+      await saveBulk();
+      return;
+    }
     try {
       await put(`/api/v1/acl/${resourceType}/${resourceId}`, rows.map(({ principal_type, principal_id, permission }) => ({ principal_type, principal_id, permission })));
       dialogs.toast('Permissions saved', 'success');
@@ -65,15 +82,43 @@ export function AclDialog({ resourceType, resourceId, name, onClose }: {
     }
   };
 
+  /** Add (or change) the rows' grants on every target; grants of other principals stay untouched. */
+  const saveBulk = async () => {
+    const failures: string[] = [];
+    for (const t of bulk ?? []) {
+      try {
+        const current = await get<AclEntry[]>(`/api/v1/acl/${t.resourceType}/${t.resourceId}`);
+        const merged = new Map(current.map((e) => [`${e.principal_type}:${e.principal_id}`,
+          { principal_type: e.principal_type, principal_id: e.principal_id, permission: e.permission }]));
+        for (const r of rows) {
+          merged.set(`${r.principal_type}:${r.principal_id}`,
+            { principal_type: r.principal_type, principal_id: r.principal_id, permission: r.permission });
+        }
+        await put(`/api/v1/acl/${t.resourceType}/${t.resourceId}`, [...merged.values()]);
+      } catch (err) {
+        failures.push(`${t.name}: ${errorMessage(err)}`);
+      }
+    }
+    const done = (bulk?.length ?? 0) - failures.length;
+    if (done) dialogs.toast(`Permissions added to ${done} item${done === 1 ? '' : 's'}`, 'success');
+    if (failures.length) setError(`Not changed: ${failures.join('; ')}`);
+    else onClose();
+  };
+
   return (
-    <Modal title={`Permissions — ${name}`} onClose={onClose} width={620}
+    <Modal title={many ? `Permissions — ${bulk!.length} items` : `Permissions — ${name}`} onClose={onClose} width={620}
            footer={<>
              {error && <span className="form-error">{error}</span>}
              <button onClick={onClose}>Cancel</button>
              <button className="primary" onClick={save}>Save</button>
            </>}>
-      <p className="muted">Grants apply to this {resourceType} and everything below it. Owners and administrators always have full access.
-        A role’s cap (e.g. read-only) limits what its members can do.</p>
+      {many ? (
+        <p className="muted">The grants below are <b>added</b> to each of the {bulk!.length} selected items (and apply to everything
+          below them). Existing grants stay; a principal that already has a grant gets the permission chosen here.</p>
+      ) : (
+        <p className="muted">Grants apply to this {resourceType} and everything below it. Owners and administrators always have full access.
+          A role’s cap (e.g. read-only) limits what its members can do.</p>
+      )}
       <table className="grid">
         <thead><tr><th>Principal</th><th>Type</th><th>Permission</th><th /></tr></thead>
         <tbody>
@@ -89,7 +134,7 @@ export function AclDialog({ resourceType, resourceId, name, onClose }: {
               <td><button className="icon-btn danger" onClick={() => setRows(rows.filter((_, j) => j !== i))} aria-label="Remove"><Trash size={14} /></button></td>
             </tr>
           ))}
-          {!rows.length && <tr><td colSpan={4} className="muted">No explicit grants.</td></tr>}
+          {!rows.length && <tr><td colSpan={4} className="muted">{many ? 'Add a role, group or user below.' : 'No explicit grants.'}</td></tr>}
         </tbody>
       </table>
       <div className="acl-add">

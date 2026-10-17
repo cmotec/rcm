@@ -21,7 +21,8 @@ import { AdminView } from './components/admin/AdminView';
 import { DialogHost } from './components/common/DialogHost';
 import { CredentialsView } from './components/credentials/CredentialsView';
 import { DetailsPanel } from './components/DetailsPanel';
-import { AclDialog } from './components/dialogs/AclDialog';
+import { AclDialog, type AclTarget } from './components/dialogs/AclDialog';
+import { BulkEditDialog } from './components/dialogs/BulkEditDialog';
 import { ConnectionDialog } from './components/dialogs/ConnectionDialog';
 import { FolderDialog } from './components/dialogs/FolderDialog';
 import { LoginPage } from './components/LoginPage';
@@ -73,6 +74,8 @@ function Shell() {
   const [connDialog, setConnDialog] = useState<{ connection?: Connection; placement?: { folderId?: string | null; parentId?: string | null } } | null>(null);
   const [folderDialog, setFolderDialog] = useState<{ folder?: Folder; parentId?: string | null } | null>(null);
   const [acl, setAcl] = useState<{ type: 'folder' | 'connection'; id: string; name: string } | null>(null);
+  const [bulkAcl, setBulkAcl] = useState<AclTarget[] | null>(null);
+  const [bulkEdit, setBulkEdit] = useState<Connection[] | null>(null);
   const [tokens, setTokens] = useState(false);
   const [profile, setProfile] = useState(false);
   useEffect(() => syncAppFullscreen(), []);
@@ -219,6 +222,8 @@ function Shell() {
             newFolder: (parentId) => setFolderDialog({ parentId }),
             editFolder: (folder) => setFolderDialog({ folder }),
             permissions: (type, id, name) => setAcl({ type, id, name }),
+            bulkEdit: setBulkEdit,
+            bulkPermissions: setBulkAcl,
             select: setSelected,
             selectedId: selected?.id ?? null,
           }} />
@@ -244,6 +249,9 @@ function Shell() {
       {connDialog && <ConnectionDialog {...connDialog} onClose={() => { setConnDialog(null); void qc.invalidateQueries({ queryKey: keys.tree }); }} />}
       {folderDialog && <FolderDialog {...folderDialog} onClose={() => setFolderDialog(null)} />}
       {acl && <AclDialog resourceType={acl.type} resourceId={acl.id} name={acl.name} onClose={() => setAcl(null)} />}
+      {bulkAcl && <AclDialog resourceType={bulkAcl[0].resourceType} resourceId={bulkAcl[0].resourceId} name={bulkAcl[0].name}
+                             bulk={bulkAcl} onClose={() => setBulkAcl(null)} />}
+      {bulkEdit && <BulkEditDialog connections={bulkEdit} onClose={() => setBulkEdit(null)} />}
       {tokens && <TokensDialog onClose={() => setTokens(false)} />}
       {profile && <ProfileDialog me={me} onClose={() => setProfile(false)} />}
     </div>

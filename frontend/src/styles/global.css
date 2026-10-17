@@ -605,3 +605,9 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; user-sel
 .search-select-list li.active { background: var(--bg-hover); }
 .search-select-list li.chosen { font-weight: 600; }
 .search-select-list li.no-hit { cursor: default; }
+
+/* bulk edit of connections: one tick per field, its input below */
+.bulk-toggle { margin-top: 10px; }
+.bulk-fields { margin: 4px 0 4px 26px; display: flex; flex-direction: column; gap: 6px; }
+.bulk-list { margin-top: 14px; }
+.bulk-list ul { margin: 6px 0 0; padding-left: 18px; max-height: 160px; overflow: auto; font-size: 12px; }
