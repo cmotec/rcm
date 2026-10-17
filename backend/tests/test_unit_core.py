@@ -245,3 +245,33 @@ def test_unless_stopped_gives_up_when_the_session_is_closed() -> None:
         assert await unless_stopped(quick(), asyncio.Event()) == "connected"
 
     asyncio.run(run())
+
+
+def test_guacd_hold_answers_sync_until_closed() -> None:
+    import asyncio
+
+    from app.services.sessions.guac_tunnel import GuacHold
+    from app.services.sessions.guacd_protocol import GuacdClient
+
+    async def run() -> None:
+        got: asyncio.Queue[bytes] = asyncio.Queue()
+
+        async def fake_guacd(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+            writer.write(b"4.size,1.0,4.1024,3.768;4.sync,4.1234;")  # a frame, then its sync
+            await writer.drain()
+            await got.put(await reader.read(100))
+            await reader.read()  # until the hold closes the connection
+            writer.close()
+
+        server = await asyncio.start_server(fake_guacd, "127.0.0.1", 0)
+        port = server.sockets[0].getsockname()[1]
+        client = await GuacdClient.connect("127.0.0.1", port)
+        hold = GuacHold(client, None, "$abc", {})
+        assert await asyncio.wait_for(got.get(), 2) == b"4.sync,4.1234;"
+        assert hold.alive
+        await hold.close(close_tunnel=True)
+        assert not hold.alive
+        server.close()
+        await server.wait_closed()
+
+    asyncio.run(run())

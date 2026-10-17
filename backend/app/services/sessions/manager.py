@@ -81,6 +81,9 @@ class Session:
     fs: RemoteFS | None = None
     fs_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     transfers: dict[str, Transfer] = field(default_factory=dict)
+    # RDP/VNC: the guacd connection kept open while no browser is attached (guac_tunnel.GuacHold), so the
+    # next attach (new window, reconnect) continues the same remote session instead of starting a new one
+    guac_hold: Any = None
     _detach: Callable[[], Awaitable[None]] | None = None
     _last_touch: float = field(default_factory=time.monotonic)
 
@@ -252,6 +255,10 @@ class SessionManager:
                 await detach()
             except Exception as exc:  # noqa: BLE001
                 log.warning("session_detach_failed", error=str(exc)[:200])
+        hold, session.guac_hold = session.guac_hold, None
+        if hold is not None:
+            with contextlib.suppress(Exception):
+                await hold.close(close_tunnel=True)
         if session.fs is not None:
             try:
                 await session.fs.close()

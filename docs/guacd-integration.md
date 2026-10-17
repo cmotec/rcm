@@ -150,10 +150,22 @@ Each frame is parsed. Then:
   and denied attempts.
 
 ## 6. Reconnection
-guacd connections cannot be resumed after the TCP stream breaks. "Reconnect"
-starts a new guacd connection with the same resolved parameters (including
-interactive credentials held in memory). Windows RDP itself reattaches to the
-existing user session, so the user sees the same desktop. The frontend
+When only the browser side goes away (the session moved to another window, the
+page was reloaded, the network dropped) the backend keeps the guacd connection
+open (`GuacHold`): it stays in the connection as a silent user and answers
+guacd's `sync`, so guacd neither drops it nor ends the connection (guacd ends a
+connection when its last user leaves). The next attach *joins* that connection
+(`select $<connection id>`); guacd sends the joining user the current screen,
+and the held user then leaves. The remote session simply continues: no new RDP
+connection, no new Windows logon. The hold ends with the session (closed by the
+user, or `SESSION_RECONNECT_GRACE_SECONDS` without a browser), or when guacd
+ends the connection. The joining user is not guacd's connection owner, so the
+remote resolution stays as it was; the browser scales the picture instead.
+
+If there is nothing to join (guacd ended the connection, or the api was
+restarted), "Reconnect" starts a new guacd connection with the same resolved
+parameters (including interactive credentials held in memory). Windows RDP
+itself usually reattaches to the existing user session. The frontend
 reconnects by itself, with backoff (1 s, 2 s, 5 s, 10 s, 20 s, then it gives
 up and shows a *Reconnect* button), on network errors.
 It does not reconnect after guacd reported an authentication or permission

@@ -77,6 +77,55 @@ def parse_client_info(params: dict[str, list[str]] | object, launch_settings: ob
     return ClientInfo(width, height, dpi, tz if tz and _TZ.match(tz) else None, audio, image)
 
 
+class GuacHold:
+    """A guacd connection kept open while no browser is attached.
+
+    When the browser side goes away without the session being closed (the session moved to another
+    window, the network dropped), the remote session must not end: guacd ends a connection once its
+    last user leaves, and a new RDP connection means a new Windows logon. The hold stays in the
+    connection as a silent user (it answers guacd's ``sync`` so guacd does not drop it) until the next
+    attach joins the same guacd connection; it is closed with the session at the latest.
+    """
+
+    def __init__(self, client: GuacdClient, tunnel: SshTunnel | None, connection_id: str,
+                 params: dict[str, str]) -> None:
+        self.client = client
+        self.tunnel = tunnel
+        self.connection_id = connection_id
+        self.params = params
+        self._task = asyncio.create_task(self._keep())
+
+    @property
+    def alive(self) -> bool:
+        return not self._task.done()
+
+    async def _keep(self) -> None:
+        try:
+            while True:
+                instr = await self.client.read_instruction()
+                if instr[0] == "sync" and len(instr) > 1:
+                    await self.client.send(encode("sync", instr[1]))
+                elif instr[0] in ("error", "disconnect"):
+                    return
+        except (GuacdError, GuacProtocolError, OSError, ConnectionError):
+            return
+
+    def take_tunnel(self) -> SshTunnel | None:
+        """The SSH tunnel the remote session runs through, handed to the attach that joins."""
+        tunnel, self.tunnel = self.tunnel, None
+        return tunnel
+
+    async def close(self, *, close_tunnel: bool) -> None:
+        self._task.cancel()
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await self._task
+        await self.client.close()
+        if close_tunnel and self.tunnel is not None:
+            with contextlib.suppress(Exception):
+                await self.tunnel.close()
+            self.tunnel = None
+
+
 def _known_hosts_line(host: str, port: int, public_key: str) -> str:
     entry = host if port == 22 else f"[{host}]:{port}"
     parts = public_key.split()
@@ -97,10 +146,47 @@ async def run_guac_tunnel(ws: WebSocket, session: Session, manager: SessionManag
 
     manager.begin_attach(session, detach)
     error: str | None = None
+    hold: GuacHold | None = session.guac_hold
+    session.guac_hold = None  # taken over by this attach
+    connection_id = ""
+    params: dict[str, str] = {}
+
+    async def guacd_handshake(select: str) -> str:
+        nonlocal client
+        client = await GuacdClient.connect(
+            settings.GUACD_HOST, settings.GUACD_PORT, timeout=settings.GUACD_CONNECT_TIMEOUT_SECONDS,
+            tls=settings.GUACD_TLS, tls_verify=settings.GUACD_TLS_VERIFY, ca_file=settings.GUACD_CA_FILE,
+        )
+        result = await client.handshake(
+            select, params, width=info.width, height=info.height, dpi=info.dpi,
+            audio=info.audio, image=info.image, timezone=info.timezone, name=session.owner_name,
+            timeout=settings.GUACD_HANDSHAKE_TIMEOUT_SECONDS,
+        )
+        if result.unsupported:
+            log.warning("guacd_params_unsupported", params=result.unsupported, protocol=session.protocol)
+        return result.connection_id
 
     async def open_guacd() -> None:
-        """SSH tunnel, guacd connection and handshake (guacd connects to the remote host meanwhile)."""
-        nonlocal client, tunnel
+        """Join the held guacd connection (same remote session), or open a new one: SSH tunnel, guacd
+        connection and handshake (guacd connects to the remote host meanwhile)."""
+        nonlocal client, tunnel, connection_id, params, hold
+        if hold is not None and hold.alive:
+            params = hold.params
+            try:
+                connection_id = await guacd_handshake(hold.connection_id)
+                tunnel = hold.take_tunnel()
+                await hold.close(close_tunnel=False)  # the held user leaves; the session goes on for this one
+                hold = None
+                log.info("guacd_session_rejoined", session_id=str(session.id))
+                return
+            except GuacdError as exc:
+                log.info("guacd_rejoin_failed", error=str(exc), session_id=str(session.id))
+                if client is not None:
+                    await client.close()
+                    client = None
+        if hold is not None:
+            await hold.close(close_tunnel=True)
+            hold = None
         host, port = launch.host, launch.port
         if launch.tunnel_via is not None:
             async with session_scope() as db:
@@ -112,7 +198,6 @@ async def run_guac_tunnel(ws: WebSocket, session: Session, manager: SessionManag
                 raise
             host, port = tunnel.bind_host, tunnel.port
 
-        params: dict[str, str]
         if session.protocol == "rdp":
             params = guacd_params.rdp_params(launch, settings, user_id=session.owner_id, session_id=session.id,
                                              client_timezone=info.timezone, host=host, port=port)
@@ -128,17 +213,7 @@ async def run_guac_tunnel(ws: WebSocket, session: Session, manager: SessionManag
                                              client_timezone=info.timezone, host=host, port=port,
                                              host_key=host_key)
 
-        client = await GuacdClient.connect(
-            settings.GUACD_HOST, settings.GUACD_PORT, timeout=settings.GUACD_CONNECT_TIMEOUT_SECONDS,
-            tls=settings.GUACD_TLS, tls_verify=settings.GUACD_TLS_VERIFY, ca_file=settings.GUACD_CA_FILE,
-        )
-        result = await client.handshake(
-            session.protocol, params, width=info.width, height=info.height, dpi=info.dpi,
-            audio=info.audio, image=info.image, timezone=info.timezone, name=session.owner_name,
-            timeout=settings.GUACD_HANDSHAKE_TIMEOUT_SECONDS,
-        )
-        if result.unsupported:
-            log.warning("guacd_params_unsupported", params=result.unsupported, protocol=session.protocol)
+        connection_id = await guacd_handshake(session.protocol)
 
     try:
         # closing the session (e.g. Cancel while the host does not answer) stops connecting at once
@@ -149,7 +224,11 @@ async def run_guac_tunnel(ws: WebSocket, session: Session, manager: SessionManag
         if leftover:
             await ws.send_text(leftover)
         await manager.mark_connected(session)
-        await _relay(ws, client, session, stop)
+        guacd_ended = await _relay(ws, client, session, stop)
+        if not guacd_ended and not stop.is_set() and session.state != "closed" and connection_id:
+            # only the browser went away: keep the remote session for the next attach
+            session.guac_hold = GuacHold(client, tunnel, connection_id, params)
+            client, tunnel = None, None
     except GuacdError as exc:
         error = str(exc)
         log.info("guacd_session_error", error=error, status=exc.status, session_id=str(session.id))
@@ -175,6 +254,8 @@ async def run_guac_tunnel(ws: WebSocket, session: Session, manager: SessionManag
                 await client.close()
             if tunnel is not None:
                 await tunnel.close()
+            if hold is not None:  # not joined (e.g. cancelled while connecting)
+                await hold.close(close_tunnel=True)
             with contextlib.suppress(Exception):
                 if ws.application_state != WebSocketState.DISCONNECTED:
                     await ws.close(code=1000)
@@ -190,7 +271,8 @@ async def _send_error(ws: WebSocket, message: str, status: int) -> None:
         await ws.close(code=1000, reason=str(status))
 
 
-async def _relay(ws: WebSocket, client: GuacdClient, session: Session, stop: asyncio.Event) -> None:
+async def _relay(ws: WebSocket, client: GuacdClient, session: Session, stop: asyncio.Event) -> bool:
+    """Relay until one side ends. True if guacd ended the connection (not the browser)."""
     allow_upload = bool(session.client_settings.get("drive_enabled")) and not session.client_settings.get(
         "disable_upload"
     )
@@ -232,14 +314,15 @@ async def _relay(ws: WebSocket, client: GuacdClient, session: Session, stop: asy
                 await client.send("".join(out))
                 session.touch()
 
-    tasks = [asyncio.create_task(upstream()), asyncio.create_task(downstream()),
-             asyncio.create_task(stop.wait())]
+    up = asyncio.create_task(upstream())
+    tasks = [up, asyncio.create_task(downstream()), asyncio.create_task(stop.wait())]
     try:
         done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
         for t in done:
             exc = t.exception()
             if exc and not isinstance(exc, (WebSocketDisconnect, ConnectionError)):
                 raise exc
+        return up in done and up.exception() is None
     finally:
         for t in tasks:
             t.cancel()
