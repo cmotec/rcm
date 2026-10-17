@@ -611,3 +611,7 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; user-sel
 .bulk-fields { margin: 4px 0 4px 26px; display: flex; flex-direction: column; gap: 6px; }
 .bulk-list { margin-top: 14px; }
 .bulk-list ul { margin: 6px 0 0; padding-left: 18px; max-height: 160px; overflow: auto; font-size: 12px; }
+
+/* credential "Used by" list */
+.usage-list { list-style: none; margin: 4px 0 8px; padding: 0; }
+.usage-list li { display: flex; align-items: center; gap: 6px; padding: 4px 2px; border-bottom: 1px solid var(--bg-sunken); }
