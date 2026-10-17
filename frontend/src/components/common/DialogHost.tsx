@@ -2,7 +2,7 @@ import { ShieldAlert, TriangleAlert } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { folderPath, folderSubtree, useCredentialFolders, useCredentials, useEffective, usePersonalAccounts } from '../../api/hooks';
 import type { Credential, PersonalAccount, PersonalAccountKind, Protocol } from '../../api/types';
-import { type AuthOverride, type DialogRequest, type InteractiveCredentials, useDialogStore } from '../../state/dialogs';
+import { type AuthOverride, type DialogRequest, type InteractiveCredentials, type LoginBatch, useDialogStore } from '../../state/dialogs';
 import { Modal } from './Modal';
 
 function ConfirmDialog({ req }: { req: Extract<DialogRequest, { kind: 'confirm' }> }) {
@@ -37,19 +37,38 @@ function PromptDialog({ req }: { req: Extract<DialogRequest, { kind: 'prompt' }>
   );
 }
 
+/** Several connections opened together: the login chosen here can be used for all of them. */
+function ShareLoginCheck({ batch, checked, onChange }: {
+  batch?: LoginBatch; checked: boolean; onChange: (v: boolean) => void;
+}) {
+  if (!batch || batch.count < 2) return null;
+  return (
+    <label className="check share-login">
+      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} />
+      <span>Use this login for all {batch.count} connections</span>
+    </label>
+  );
+}
+
 function CredentialsDialog({ req }: { req: Extract<DialogRequest, { kind: 'credentials' }> }) {
   const [v, setV] = useState<InteractiveCredentials>({ username: req.username ?? '', password: '', domain: req.domain ?? '' });
   const accounts = useConfiguredAccounts();
+  const [shareAll, setShareAll] = useState(true);
+  const finish = (answer: InteractiveCredentials | { mode: 'account'; account: PersonalAccountKind }) => {
+    if (shareAll && req.batch) req.batch.shared = 'mode' in answer ? answer : { mode: 'own', credentials: answer };
+    req.resolve(answer);
+  };
   const submit = () => {
     const out: InteractiveCredentials = {};
     if (v.username) out.username = v.username;
     if (v.password) out.password = v.password;
     if (v.domain) out.domain = v.domain;
-    req.resolve(out);
+    finish(out);
   };
   return (
     <Modal title={`Sign in to ${req.connectionName}`} onClose={() => req.resolve(null)} width={420}
            footer={<>
+             <ShareLoginCheck batch={req.batch} checked={shareAll} onChange={setShareAll} />
              <button onClick={() => req.resolve(null)}>Cancel</button>
              <button className="primary" onClick={submit}>Connect</button>
            </>}>
@@ -73,7 +92,7 @@ function CredentialsDialog({ req }: { req: Extract<DialogRequest, { kind: 'crede
         <div className="account-shortcuts">
           <span className="muted">Or sign in with</span>
           {accounts.map((a) => (
-            <button key={a.kind} type="button" onClick={() => req.resolve({ mode: 'account', account: a.kind })}
+            <button key={a.kind} type="button" onClick={() => finish({ mode: 'account', account: a.kind })}
                     title={accountLogin(a)}>
               {ACCOUNT_LABELS[a.kind]}
             </button>
@@ -276,14 +295,20 @@ function ChooseCredentialDialog({ req }: { req: Extract<DialogRequest, { kind: '
   // nothing to choose from: start on "Enter credentials"
   const active = accountsOnly ? 'choose' : tab ?? (choices.loading || choices.total ? 'choose' : 'own');
   const valid = active === 'choose' ? Boolean(selected) : Boolean(own.username || own.password);
+  const [shareAll, setShareAll] = useState(true);
+  const finish = (answer: AuthOverride) => {
+    if (shareAll && req.batch) req.batch.shared = answer;
+    req.resolve(answer);
+  };
   const submit = () => {
     if (!valid) return;
-    if (active === 'choose') req.resolve(loginOverride(selected!));
-    else req.resolve({ mode: 'own', credentials: typedCredentials(own) });
+    if (active === 'choose') finish(loginOverride(selected!));
+    else finish({ mode: 'own', credentials: typedCredentials(own) });
   };
   return (
     <Modal title={`Connect to ${req.connectionName}`} onClose={() => req.resolve(null)} width={480}
            footer={<>
+             <ShareLoginCheck batch={req.batch} checked={shareAll} onChange={setShareAll} />
              <button onClick={() => req.resolve(null)}>Cancel</button>
              <button className="primary" disabled={!valid} onClick={submit}>Connect</button>
            </>}>
@@ -306,7 +331,7 @@ function ChooseCredentialDialog({ req }: { req: Extract<DialogRequest, { kind: '
               : 'You have no accounts or credentials you are allowed to use.'}</p>
           )}
           <LoginChoiceList choices={choices} selected={selected} onSelect={setPicked}
-                           onPick={(k) => req.resolve(loginOverride(k))} />
+                           onPick={(k) => finish(loginOverride(k))} />
         </>
       ) : (
         <>

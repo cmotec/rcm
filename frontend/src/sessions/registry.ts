@@ -1,6 +1,6 @@
 import { ApiError, del, errorMessage, get, post, put } from '../api/client';
 import type { HostKeyInfo, Protocol, SessionInfo } from '../api/types';
-import { type AuthOverride, dialogs, type InteractiveCredentials } from '../state/dialogs';
+import { type AuthOverride, dialogs, type InteractiveCredentials, type LoginBatch } from '../state/dialogs';
 import { beginConnect, type ConnectHandle } from '../state/connecting';
 import { useWorkspace } from '../state/workspace';
 import {
@@ -52,6 +52,8 @@ export interface OpenTarget {
   splitWith?: { sessionId: string; edge: Edge };
   /** Different credentials for this session only (replaces the configured authentication). */
   authOverride?: AuthOverride;
+  /** opened together with other connections: they can share one login answer */
+  batch?: LoginBatch;
 }
 
 interface ConnectionRef {
@@ -104,8 +106,10 @@ async function startSession(conn: ConnectionRef, target: OpenTarget, loading: Co
       if (loading.cancelled) return null; // given up meanwhile: no dialogs, no error toast
       if (err instanceof ApiError && err.code === 'credential_choice_required') {
         const problem = err.problem as { folder_id?: string | null; accounts_only?: boolean };
-        const chosen = await ask(loading, () => dialogs.chooseCredential(conn.id, conn.name, conn.protocol,
-          problem.folder_id ?? null, Boolean(problem.accounts_only)));
+        const batch = target.batch;
+        const question = () => ask(loading, () => dialogs.chooseCredential(conn.id, conn.name, conn.protocol,
+          problem.folder_id ?? null, Boolean(problem.accounts_only), batch));
+        const chosen = batch ? await batch.oneAtATime(async () => batch.shared ?? question()) : await question();
         if (!chosen) return null;
         if (chosen.mode === 'credential') credentialId = chosen.credential_id;
         else authOverride = chosen; // one of the user's accounts, or typed: this session only
@@ -113,13 +117,24 @@ async function startSession(conn: ConnectionRef, target: OpenTarget, loading: Co
       }
       if (err instanceof ApiError && err.code === 'credentials_required') {
         const p = err.problem as unknown as { fields: string[]; username?: string; domain?: string };
-        const entered = await ask(loading, () => dialogs.credentials({
+        const batch = target.batch;
+        const question = () => ask(loading, () => dialogs.credentials({
           connectionName: conn.name,
           protocol: conn.protocol,
           fields: p.fields,
           username: credentials?.username ?? p.username,
           domain: credentials?.domain ?? p.domain,
+          batch,
         }));
+        const entered = batch
+          ? await batch.oneAtATime(async () => (batch.shared ? null : question()))
+          : await question();
+        if (batch?.shared && !entered) {
+          // the login another connection of the batch was opened with
+          if (batch.shared.mode === 'own') credentials = batch.shared.credentials;
+          else authOverride = batch.shared;
+          continue;
+        }
         if (!entered) return null;
         if ('mode' in entered) authOverride = entered; // one of the user's own accounts
         else credentials = entered;

@@ -4,7 +4,7 @@ import { del, errorMessage, patch, post, put } from '../../api/client';
 import { hasPerm, useInvalidate, useMe, useTree } from '../../api/hooks';
 import type { Connection, Folder } from '../../api/types';
 import { openConnection } from '../../sessions/registry';
-import { dialogs } from '../../state/dialogs';
+import { dialogs, LoginBatch } from '../../state/dialogs';
 import { connectionLabel, useTreePrefs } from '../../state/treePrefs';
 import { useWorkspace } from '../../state/workspace';
 import { FolderGlyph, ProtocolIcon } from '../common/icons';
@@ -167,12 +167,13 @@ export function ConnectionTree({ actions, tapToOpen = false }: { actions: TreeAc
   /** Open several connections: tabs, floating windows (staggered) or side by side in a split. */
   const openMany = async (list: Connection[], mode: 'tab' | 'float' | 'split') => {
     let previous = mode === 'split' ? focusedSession : null;
+    const batch = new LoginBatch(list.length); // logins can be answered once for all of them
     for (const [i, c] of list.entries()) {
       const ref = { ...c, name: label(c).primary };
-      if (mode === 'float') void openConnection(ref, { floating: { x: 60 + i * 32, y: 40 + i * 32, w: 960, h: 620 } });
-      else if (mode === 'tab') void openConnection(ref);
+      if (mode === 'float') void openConnection(ref, { floating: { x: 60 + i * 32, y: 40 + i * 32, w: 960, h: 620 }, batch });
+      else if (mode === 'tab') void openConnection(ref, { batch });
       else {
-        const id = await openConnection(ref, previous ? { splitWith: { sessionId: previous, edge: 'right' } } : {});
+        const id = await openConnection(ref, previous ? { splitWith: { sessionId: previous, edge: 'right' }, batch } : { batch });
         if (id) previous = id;
       }
     }
@@ -550,13 +551,6 @@ export function ConnectionTree({ actions, tapToOpen = false }: { actions: TreeAc
         {isLoading && <div className="muted pad">Loading…</div>}
         {error && <div className="banner error">{errorMessage(error)}</div>}
         {tree && !nodes.length && <div className="muted pad">{query ? 'No matches' : 'No connections yet. Create one with “+”.'}</div>}
-        {selection.size > 1 && (
-          <div className="tree-selection-bar">
-            <span>{selection.size} selected</span>
-            <button className="danger" onClick={() => void deleteMany([...selection])}>Delete</button>
-            <button onClick={() => setSelection(new Set())}>Clear</button>
-          </div>
-        )}
         <ul className="tree" role="tree">{nodes.map((n) => renderNode(n, 0))}</ul>
       </div>
     </div>

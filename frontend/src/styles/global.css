@@ -175,9 +175,6 @@ button.user:hover { background: var(--hover, rgba(127, 127, 127, 0.12)); color: 
 .tree-scroll { flex: 1; overflow: auto; padding: 4px 0 40px; }
 .tree-scroll.drop-root { background: var(--accent-soft); }
 .tree-scroll { outline: none; }
-.tree-selection-bar { position: sticky; bottom: 0; display: flex; align-items: center; gap: 8px; margin: 8px; padding: 6px 8px;
-  background: var(--bg-elev); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); }
-.tree-selection-bar span { flex: 1; }
 .tree, .tree ul { list-style: none; margin: 0; padding: 0; }
 .tree-row { display: flex; align-items: center; gap: 5px; height: 26px; padding-right: 8px; cursor: default; white-space: nowrap; user-select: none; border: 1px solid transparent; }
 .tree-row:hover { background: var(--bg-hover); }
@@ -615,3 +612,6 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; user-sel
 /* credential "Used by" list */
 .usage-list { list-style: none; margin: 4px 0 8px; padding: 0; }
 .usage-list li { display: flex; align-items: center; gap: 6px; padding: 4px 2px; border-bottom: 1px solid var(--bg-sunken); }
+
+/* login dialogs while several connections open together */
+.share-login { margin-right: auto; }
