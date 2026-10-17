@@ -580,3 +580,8 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; user-sel
   .cred-table .check-col { width: auto; text-align: left; }
   .cred-table .check-col input { width: 20px; height: 20px; }
 }
+
+/* credential choice: matching credentials in their own list above the others */
+.choice-heading { margin: 10px 0 0; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em;
+  color: var(--text-muted); }
+.choice-heading + .choice-list { margin-top: 4px; }

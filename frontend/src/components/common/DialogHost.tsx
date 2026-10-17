@@ -1,7 +1,7 @@
 import { ShieldAlert, TriangleAlert } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
-import { folderPath, folderSubtree, useCredentialFolders, useCredentials, usePersonalAccounts } from '../../api/hooks';
-import type { PersonalAccount, PersonalAccountKind, Protocol } from '../../api/types';
+import { folderPath, folderSubtree, useCredentialFolders, useCredentials, useEffective, usePersonalAccounts } from '../../api/hooks';
+import type { Credential, PersonalAccount, PersonalAccountKind, Protocol } from '../../api/types';
 import { type DialogRequest, type InteractiveCredentials, useDialogStore } from '../../state/dialogs';
 import { Modal } from './Modal';
 
@@ -191,6 +191,53 @@ function AccountChoice({ accounts, loading, selected, onSelect, onPick }: {
   );
 }
 
+/** The connection's host name (full and short) and description, lower case: credentials whose name or
+ * description contain one of them are suggested first (e.g. host atplct0005 → credential atplct0005-root). */
+function useMatchTerms(connectionId: string): string[] {
+  const { data } = useEffective(connectionId);
+  const host = typeof data?.hostname?.value === 'string' ? data.hostname.value.trim().toLowerCase() : '';
+  const desc = typeof data?.description?.value === 'string' ? data.description.value.split(/\r?\n/)[0].trim().toLowerCase() : '';
+  const terms = new Set<string>();
+  if (host) {
+    terms.add(host);
+    if (!/^[\d.]+$/.test(host) && !host.includes(':')) terms.add(host.split('.')[0]); // not for IP addresses
+  }
+  if (desc) terms.add(desc);
+  return [...terms].filter((t) => t.length >= 3);
+}
+
+/** Credentials to choose from: the ones matching the connection in their own list on top, then the rest. */
+function CredentialChoiceList({ items, terms, selected, onSelect, onPick }: {
+  items: Credential[]; terms: string[]; selected: string | null;
+  onSelect: (id: string) => void; onPick: (id: string) => void;
+}) {
+  const matches = (c: Credential) => {
+    const text = `${c.name} ${c.description ?? ''}`.toLowerCase();
+    return terms.some((t) => text.includes(t));
+  };
+  const matching = items.filter(matches);
+  const others = items.filter((c) => !matches(c));
+  const list = (rows: Credential[]) => (
+    <ul className="choice-list" role="listbox">
+      {rows.map((c) => (
+        <li key={c.id} role="option" aria-selected={selected === c.id} className={selected === c.id ? 'active' : ''}
+            onClick={() => onSelect(c.id)} onDoubleClick={() => onPick(c.id)}>
+          <b>{c.name}</b>
+          <span className="muted">{c.domain ? `${c.domain}\\` : ''}{c.username ?? ''}</span>
+        </li>
+      ))}
+    </ul>
+  );
+  if (!matching.length) return list(others);
+  return (
+    <>
+      <div className="choice-heading">Matching this connection</div>
+      {list(matching)}
+      {others.length > 0 && <><div className="choice-heading">Other credentials</div>{list(others)}</>}
+    </>
+  );
+}
+
 function ChooseCredentialDialog({ req }: { req: Extract<DialogRequest, { kind: 'choose-credential' }> }) {
   const { data, isLoading } = useCredentials();
   const { data: folders } = useCredentialFolders();
@@ -200,6 +247,7 @@ function ChooseCredentialDialog({ req }: { req: Extract<DialogRequest, { kind: '
   const usable = (data?.items ?? []).filter((c) => ['connect', 'edit', 'manage'].includes(c.permission ?? ''))
     .filter((c) => !allowedFolders || Boolean(c.folder_id && allowedFolders.has(c.folder_id)));
   const shown = usable.filter((c) => !filter || `${c.name} ${c.username ?? ''} ${c.domain ?? ''}`.toLowerCase().includes(filter.toLowerCase()));
+  const terms = useMatchTerms(req.connectionId);
   const [selected, setSelected] = useState<string | null>(null);
   const [tab, setTab] = useState<'store' | 'account' | 'own' | null>(null);
   const [own, setOwn] = useState<InteractiveCredentials>({ username: '', password: '', domain: '' });
@@ -246,15 +294,8 @@ function ChooseCredentialDialog({ req }: { req: Extract<DialogRequest, { kind: '
           )}
           {isLoading && <p className="muted">Loading…</p>}
           {!isLoading && !usable.length && <p className="banner warn">You have no credentials you are allowed to use.</p>}
-          <ul className="choice-list" role="listbox">
-            {shown.map((c) => (
-              <li key={c.id} role="option" aria-selected={selected === c.id} className={selected === c.id ? 'active' : ''}
-                  onClick={() => setSelected(c.id)} onDoubleClick={() => req.resolve({ mode: 'credential', credential_id: c.id })}>
-                <b>{c.name}</b>
-                <span className="muted">{c.domain ? `${c.domain}\\` : ''}{c.username ?? ''}</span>
-              </li>
-            ))}
-          </ul>
+          <CredentialChoiceList items={shown} terms={terms} selected={selected} onSelect={setSelected}
+                                onPick={(id) => req.resolve({ mode: 'credential', credential_id: id })} />
         </>
       ) : (
         <>
@@ -269,6 +310,7 @@ function ChooseCredentialDialog({ req }: { req: Extract<DialogRequest, { kind: '
 function OpenWithDialog({ req }: { req: Extract<DialogRequest, { kind: 'open-with' }> }) {
   const { data } = useCredentials();
   const usable = (data?.items ?? []).filter((c) => ['connect', 'edit', 'manage'].includes(c.permission ?? ''));
+  const terms = useMatchTerms(req.connectionId);
   const [mode, setMode] = useState<'own' | 'account' | 'credential'>('own');
   const [v, setV] = useState<InteractiveCredentials>({ username: '', password: '', domain: '' });
   const [credId, setCredId] = useState<string | null>(null);
@@ -319,15 +361,8 @@ function OpenWithDialog({ req }: { req: Extract<DialogRequest, { kind: 'open-wit
       ) : (
         <>
           {!usable.length && <p className="banner warn">You have no credentials you are allowed to use.</p>}
-          <ul className="choice-list" role="listbox">
-            {usable.map((c) => (
-              <li key={c.id} role="option" aria-selected={credId === c.id} className={credId === c.id ? 'active' : ''}
-                  onClick={() => setCredId(c.id)} onDoubleClick={() => req.resolve({ mode: 'credential', credential_id: c.id })}>
-                <b>{c.name}</b>
-                <span className="muted">{c.domain ? `${c.domain}\\` : ''}{c.username ?? ''}</span>
-              </li>
-            ))}
-          </ul>
+          <CredentialChoiceList items={usable} terms={terms} selected={credId} onSelect={setCredId}
+                                onPick={(id) => req.resolve({ mode: 'credential', credential_id: id })} />
         </>
       )}
     </Modal>

@@ -12,6 +12,21 @@ T = TypeVar("T")
 
 Protocol = Literal["host", "ssh", "sftp", "rdp", "vnc", "ftp", "ftps"]
 AuthMode = Literal["inherit", "direct", "credential", "interactive"]
+
+# OpenAPI descriptions of the authentication fields (connections, hosts and folders share them).
+AUTH_MODE_DOC = (
+    "Where the login comes from. `inherit`: from the parent connection (e.g. the host), then from the folder; "
+    "`direct`: `username` / `domain` / `password` stored here; `credential`: the credential-store entry "
+    "`credential_id`, or without one the user picks a credential when connecting (optionally only from "
+    "`credential_folder_id`); `interactive`: asked when connecting (`username` / `domain` pre-fill the prompt). "
+    "Fields the mode does not use are cleared. See docs/api.md, 'Authentication'."
+)
+INHERIT_AUTH_DOC = ("Fill fields that are still empty from the parent connection, then the folder (default true). "
+                    "false = this connection's authentication is complete on its own.")
+USERNAME_DOC = "auth_mode direct / interactive (pre-fill)"
+PASSWORD_DOC = "auth_mode direct; write-only (responses only say `password_set`); null clears"
+CREDENTIAL_ID_DOC = ("auth_mode credential: the pinned credential-store entry (the caller needs 'connect' on it). "
+                     "null = the user chooses at connect time")
 PermissionLevel = Literal["view", "connect", "edit", "manage"]
 _HOSTNAME = r"^[A-Za-z0-9_.:\-\[\]%]+$"
 _DOMAIN = r"^[A-Za-z0-9_.\-]+$"
@@ -175,11 +190,12 @@ class FolderBase(Strict):
     search_domain: str | None = Field(None, max_length=253, pattern=_DOMAIN)
     sort_order: int | None = None
     # authentication for the connections inside whose own authentication inherits
-    auth_mode: AuthMode | None = None
-    username: str | None = Field(None, max_length=255)
-    domain: str | None = Field(None, max_length=255)
-    password: str | None = Field(None, max_length=4096, description="write-only; null clears")
-    credential_id: uuid.UUID | None = None
+    auth_mode: AuthMode | None = Field(None, description=AUTH_MODE_DOC + " On a folder it applies to the connections "
+                                       "inside whose own authentication inherits.")
+    username: str | None = Field(None, max_length=255, description=USERNAME_DOC)
+    domain: str | None = Field(None, max_length=255, description=USERNAME_DOC)
+    password: str | None = Field(None, max_length=4096, description=PASSWORD_DOC)
+    credential_id: uuid.UUID | None = Field(None, description=CREDENTIAL_ID_DOC)
     credential_folder_id: uuid.UUID | None = Field(
         None, description="auth_mode credential without credential_id: offer only credentials from this folder")
 
@@ -223,12 +239,12 @@ class FolderOut(Out):
 class ConnectionFields(Strict):
     hostname: str | None = Field(None, max_length=255, pattern=_HOSTNAME)
     port: int | None = Field(None, ge=1, le=65535)
-    auth_mode: AuthMode | None = None
-    inherit_auth: bool | None = None
-    username: str | None = Field(None, max_length=255)
-    domain: str | None = Field(None, max_length=255)
-    password: str | None = Field(None, max_length=4096, description="write-only")
-    credential_id: uuid.UUID | None = None
+    auth_mode: AuthMode | None = Field(None, description=AUTH_MODE_DOC)
+    inherit_auth: bool | None = Field(None, description=INHERIT_AUTH_DOC)
+    username: str | None = Field(None, max_length=255, description=USERNAME_DOC)
+    domain: str | None = Field(None, max_length=255, description=USERNAME_DOC)
+    password: str | None = Field(None, max_length=4096, description=PASSWORD_DOC)
+    credential_id: uuid.UUID | None = Field(None, description=CREDENTIAL_ID_DOC)
     search_domain: str | None = Field(None, max_length=253, pattern=_DOMAIN)
     description: str | None = Field(None, max_length=20000)
     tags: list[str] | None = Field(None, max_length=50)

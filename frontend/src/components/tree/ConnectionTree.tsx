@@ -98,7 +98,7 @@ export function ConnectionTree({ actions, tapToOpen = false }: { actions: TreeAc
   /** "Open with different credentials…": typed credentials or another credential-store entry, this session only. */
   const openWith = async (c: Connection) => {
     const name = label(c).primary;
-    const override = await dialogs.openWith(name, c.protocol);
+    const override = await dialogs.openWith(c.id, name, c.protocol);
     if (override) void openConnection({ ...c, name }, { authOverride: override });
   };
 

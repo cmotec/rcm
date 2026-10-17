@@ -103,7 +103,7 @@ async function startSession(conn: ConnectionRef, target: OpenTarget, loading: Co
     } catch (err) {
       if (err instanceof ApiError && err.code === 'credential_choice_required') {
         const folderId = (err.problem as { folder_id?: string | null }).folder_id ?? null;
-        const chosen = await ask(loading, () => dialogs.chooseCredential(conn.name, conn.protocol, folderId));
+        const chosen = await ask(loading, () => dialogs.chooseCredential(conn.id, conn.name, conn.protocol, folderId));
         if (!chosen) return null;
         if (chosen.mode === 'credential') credentialId = chosen.credential_id;
         else authOverride = chosen; // typed by the user, this session only
