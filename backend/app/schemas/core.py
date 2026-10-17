@@ -407,6 +407,25 @@ class CredentialOut(Out):
     secret_attribute_names: list[str] = []
 
 
+class CredentialBulkIds(Strict):
+    ids: list[uuid.UUID] = Field(min_length=1, max_length=1000)
+
+
+class CredentialBulkMove(CredentialBulkIds):
+    folder_id: uuid.UUID | None = Field(description="target credential folder; null = no folder")
+
+
+class BulkFailure(BaseModel):
+    id: uuid.UUID
+    name: str | None = None
+    error: str
+
+
+class BulkResult(BaseModel):
+    done: list[uuid.UUID]
+    failed: list[BulkFailure]
+
+
 class CredentialFolderCreate(Strict):
     name: str = Field(min_length=1, max_length=255)
     parent_id: uuid.UUID | None = None

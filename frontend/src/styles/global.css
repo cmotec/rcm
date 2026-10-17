@@ -565,3 +565,18 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; user-sel
 @media (max-width: 560px) {
   .radio-cards.three { grid-template-columns: 1fr; }
 }
+
+/* Credential store: bulk selection and drag & drop */
+.bulk-bar { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 6px 8px; margin-bottom: 8px;
+  border: 1px solid var(--accent); border-radius: var(--radius); background: var(--accent-soft); }
+.bulk-bar > span:first-child { margin-right: 6px; }
+.cred-table .check-col { width: 28px; padding-right: 0; text-align: center; }
+.cred-table .check-col input { margin: 0; vertical-align: middle; }
+.cred-table tr.selected td { background: var(--bg-active); }
+.cred-table tr[draggable="true"] { cursor: grab; }
+.cred-folder.drop-target { outline: 2px dashed var(--accent); outline-offset: -2px; background: var(--accent-soft); }
+.hint { margin: 0 0 6px; }
+@media (max-width: 768px) {
+  .cred-table .check-col { width: auto; text-align: left; }
+  .cred-table .check-col input { width: 20px; height: 20px; }
+}

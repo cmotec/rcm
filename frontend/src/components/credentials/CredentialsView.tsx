@@ -1,5 +1,5 @@
-import { Cloud, Eye, Folder, FolderPlus, KeyRound, Layers, Pencil, Plus, Search, Shield, Trash, TriangleAlert } from 'lucide-react';
-import { Fragment, useEffect, useState } from 'react';
+import { Cloud, Eye, Folder, FolderInput, FolderPlus, KeyRound, Layers, Pencil, Plus, Search, Shield, Trash, TriangleAlert, X } from 'lucide-react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import { del, errorMessage, get, patch, post, put } from '../../api/client';
 import { folderPath, folderSubtree, hasPerm, useCredentialFolders, useCredentials, useInvalidate, useMe } from '../../api/hooks';
 import type { Credential, CredentialFolder, CredentialSecrets, SecretMapping, SecretProvider } from '../../api/types';
@@ -378,15 +378,66 @@ function MappingsDialog({ credential, onClose }: { credential: Credential; onClo
 
 type FolderSel = 'all' | 'none' | string;
 
-function FolderTree({ folders, selected, onSelect }: {
+/** Drag & drop payloads: credentials (ids) onto a folder, or a folder into another folder. */
+const DRAG_CREDENTIALS = 'application/x-rcm-credentials';
+const DRAG_FOLDER = 'application/x-rcm-credential-folder';
+
+/** What is being dragged (dataTransfer contents cannot be read before the drop). */
+type Dragging = { kind: 'credentials'; ids: string[] } | { kind: 'folder'; id: string } | null;
+
+function FolderTree({ folders, selected, onSelect, dragging, setDragging, onDropCredentials, onDropFolder }: {
   folders: CredentialFolder[]; selected: FolderSel; onSelect: (f: FolderSel) => void;
+  dragging: Dragging; setDragging: (d: Dragging) => void;
+  onDropCredentials: (ids: string[], folderId: string | null) => void;
+  onDropFolder: (id: string, parentId: string | null) => void;
 }) {
+  const [over, setOver] = useState<FolderSel | null>(null);
   const children = (parent: string | null) => folders.filter((f) => (f.parent_id ?? null) === parent)
     .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
+
+  /** Can the current drag be dropped on this entry? ('all' only takes folders: back to the top level) */
+  const accepts = (target: FolderSel): boolean => {
+    if (!dragging) return false;
+    if (dragging.kind === 'credentials') return target !== 'all';
+    if (target === 'all' || target === 'none') return folders.find((f) => f.id === dragging.id)?.parent_id != null;
+    // not into itself or below itself, and not where it already is
+    return !folderSubtree(folders, dragging.id).has(target) && folders.find((f) => f.id === dragging.id)?.parent_id !== target;
+  };
+  const dropProps = (target: FolderSel) => ({
+    onDragOver: (e: React.DragEvent) => {
+      if (!accepts(target)) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      if (over !== target) setOver(target);
+    },
+    onDragLeave: (e: React.DragEvent) => {
+      if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setOver((o) => (o === target ? null : o));
+    },
+    onDrop: (e: React.DragEvent) => {
+      e.preventDefault();
+      setOver(null);
+      const folderId = target === 'all' || target === 'none' ? null : target;
+      const creds = e.dataTransfer.getData(DRAG_CREDENTIALS);
+      const folder = e.dataTransfer.getData(DRAG_FOLDER);
+      setDragging(null);
+      if (creds) onDropCredentials(JSON.parse(creds) as string[], folderId);
+      else if (folder) onDropFolder(folder, folderId);
+    },
+  });
+  const cls = (target: FolderSel) => `cred-folder ${selected === target ? 'active' : ''} ${over === target ? 'drop-target' : ''}`;
+
   const render = (parent: string | null, depth: number): React.ReactNode => children(parent).map((f) => (
     <li key={f.id}>
-      <button className={`cred-folder ${selected === f.id ? 'active' : ''}`} style={{ paddingLeft: 8 + depth * 14 }}
-              onClick={() => onSelect(f.id)} title={f.description ?? f.name}>
+      <button className={cls(f.id)} style={{ paddingLeft: 8 + depth * 14 }}
+              onClick={() => onSelect(f.id)} title={f.description ?? f.name}
+              draggable={['edit', 'manage'].includes(f.permission ?? '')}
+              onDragStart={(e) => {
+                e.dataTransfer.setData(DRAG_FOLDER, f.id);
+                e.dataTransfer.effectAllowed = 'move';
+                setDragging({ kind: 'folder', id: f.id });
+              }}
+              onDragEnd={() => setDragging(null)}
+              {...dropProps(f.id)}>
         <Folder size={14} /> <span>{f.name}</span>
       </button>
       <ul>{render(f.id, depth + 1)}</ul>
@@ -395,13 +446,51 @@ function FolderTree({ folders, selected, onSelect }: {
   return (
     <nav className="cred-folders" aria-label="Credential folders">
       <ul>
-        <li><button className={`cred-folder ${selected === 'all' ? 'active' : ''}`} onClick={() => onSelect('all')}>
+        <li><button className={cls('all')} onClick={() => onSelect('all')} {...dropProps('all')}
+                    title={dragging?.kind === 'folder' ? 'Drop here: move the folder to the top level' : undefined}>
           <Layers size={14} /> <span>All credentials</span></button></li>
-        <li><button className={`cred-folder ${selected === 'none' ? 'active' : ''}`} onClick={() => onSelect('none')}>
+        <li><button className={cls('none')} onClick={() => onSelect('none')} {...dropProps('none')}>
           <KeyRound size={14} /> <span>No folder</span></button></li>
         {render(null, 0)}
       </ul>
     </nav>
+  );
+}
+
+interface BulkResult {
+  done: string[];
+  failed: { id: string; name: string | null; error: string }[];
+}
+
+/** Toast for a bulk result: how many worked, and why the others did not. */
+function reportBulk(r: BulkResult, verb: string): void {
+  const n = r.done.length;
+  if (n) dialogs.toast(`${verb} ${n} credential${n === 1 ? '' : 's'}`, 'success');
+  if (r.failed.length) {
+    const list = r.failed.slice(0, 5).map((f) => `${f.name ?? f.id}: ${f.error}`).join('; ');
+    dialogs.toast(`${r.failed.length} not ${verb.toLowerCase()}: ${list}${r.failed.length > 5 ? ' …' : ''}`, 'error');
+  }
+}
+
+/** Target folder for "Move to…" (only folders the user may edit). */
+function MoveDialog({ count, folders, onMove, onClose }: {
+  count: number; folders: CredentialFolder[]; onMove: (folderId: string | null) => void; onClose: () => void;
+}) {
+  const targets = folders.filter((f) => ['edit', 'manage'].includes(f.permission ?? ''))
+    .sort((a, b) => folderPath(folders, a.id).localeCompare(folderPath(folders, b.id)));
+  const [target, setTarget] = useState('');
+  return (
+    <Modal title={`Move ${count} credential${count === 1 ? '' : 's'}`} onClose={onClose} width={440}
+           footer={<><button onClick={onClose}>Cancel</button>
+             <button className="primary" onClick={() => onMove(target || null)}>Move</button></>}>
+      <label className="field"><span>Target folder</span>
+        <select value={target} onChange={(e) => setTarget(e.target.value)} autoFocus>
+          <option value="">No folder</option>
+          {targets.map((f) => <option key={f.id} value={f.id}>{folderPath(folders, f.id)}</option>)}
+        </select>
+      </label>
+      <p className="muted small">Access granted on a folder applies to the credentials in it, so moving can change who may use them.</p>
+    </Modal>
   );
 }
 
@@ -418,11 +507,77 @@ export function CredentialsView() {
   const [revealing, setRevealing] = useState<Credential | null>(null);
   const [mapping, setMapping] = useState<Credential | null>(null);
   const [acl, setAcl] = useState<{ type: 'credential' | 'cred_folder'; id: string; name: string } | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const lastClicked = useRef<string | null>(null);
+  const [moving, setMoving] = useState(false);
+  const [dragging, setDragging] = useState<Dragging>(null);
   const current = folder !== 'all' && folder !== 'none' ? folders.find((f) => f.id === folder) ?? null : null;
   const inFolder = current ? folderSubtree(folders, current.id) : null;
   const items = (data?.items ?? [])
     .filter((c) => folder === 'all' || (folder === 'none' ? !c.folder_id : Boolean(c.folder_id && inFolder?.has(c.folder_id))))
     .filter((c) => !q || `${c.name} ${c.username ?? ''} ${c.description ?? ''}`.toLowerCase().includes(q.toLowerCase()));
+  // bulk actions apply to the selected credentials that are shown
+  const chosen = items.filter((c) => selected.has(c.id));
+  const allShownSelected = items.length > 0 && chosen.length === items.length;
+  useEffect(() => setSelected(new Set()), [folder]);
+
+  const toggle = (c: Credential, range: boolean) => {
+    const next = new Set(selected);
+    const on = !next.has(c.id);
+    const from = range && lastClicked.current ? items.findIndex((x) => x.id === lastClicked.current) : -1;
+    const to = items.findIndex((x) => x.id === c.id);
+    if (from >= 0 && to >= 0) {
+      for (const x of items.slice(Math.min(from, to), Math.max(from, to) + 1)) {
+        if (on) next.add(x.id);
+        else next.delete(x.id);
+      }
+    } else if (on) next.add(c.id);
+    else next.delete(c.id);
+    lastClicked.current = c.id;
+    setSelected(next);
+  };
+
+  const moveCredentials = async (ids: string[], folderId: string | null) => {
+    try {
+      const r = await post<BulkResult>('/api/v1/credentials/bulk/move', { ids, folder_id: folderId });
+      reportBulk(r, 'Moved');
+      setSelected(new Set());
+    } catch (err) {
+      dialogs.toast(errorMessage(err), 'error');
+    } finally {
+      invalidate.credentials();
+    }
+  };
+
+  const deleteSelected = async () => {
+    const n = chosen.length;
+    const names = chosen.slice(0, 5).map((c) => c.name).join(', ') + (n > 5 ? ', …' : '');
+    if (!(await dialogs.confirm({ title: `Delete ${n} credential${n === 1 ? '' : 's'}`,
+      message: `Delete ${names}? Credentials still used by connections or other credentials are kept.`,
+      danger: true, confirmLabel: 'Delete' }))) return;
+    try {
+      const r = await post<BulkResult>('/api/v1/credentials/bulk/delete', { ids: chosen.map((c) => c.id) });
+      reportBulk(r, 'Deleted');
+      setSelected(new Set(r.failed.map((f) => f.id)));
+    } catch (err) {
+      dialogs.toast(errorMessage(err), 'error');
+    } finally {
+      invalidate.credentials();
+    }
+  };
+
+  const moveFolder = async (id: string, parentId: string | null) => {
+    const f = folders.find((x) => x.id === id);
+    if (!f) return;
+    try {
+      await patch(`/api/v1/credential-folders/${id}`, { parent_id: parentId, version: f.version });
+    } catch (err) {
+      dialogs.toast(errorMessage(err), 'error');
+    } finally {
+      invalidate.credentials();
+    }
+  };
+
   const canCreate = hasPerm(me, 'credentials.create');
   const folderEditable = current ? ['edit', 'manage'].includes(current.permission ?? '') : canCreate;
 
@@ -495,7 +650,9 @@ export function CredentialsView() {
                 .map((f) => <option key={f.id} value={f.id}>{folderPath(folders, f.id)}</option>)}
             </select>
           ) : (
-            <FolderTree folders={folders} selected={folder} onSelect={setFolder} />
+            <FolderTree folders={folders} selected={folder} onSelect={setFolder} dragging={dragging} setDragging={setDragging}
+                        onDropCredentials={(ids, f) => void moveCredentials(ids, f)}
+                        onDropFolder={(id, parent) => void moveFolder(id, parent)} />
           )}
           <div className="row small">
             <button disabled={!canCreate || (current !== null && !folderEditable)} onClick={newFolder} title={current ? 'New sub-folder' : 'New folder'}>
@@ -514,12 +671,40 @@ export function CredentialsView() {
               <button className="icon-btn danger" title="Delete folder" disabled={current.permission !== 'manage'} onClick={deleteFolder}><Trash size={14} /></button>
             </div>
           )}
+          {chosen.length > 0 && (
+            <div className="bulk-bar" role="toolbar" aria-label="Selected credentials">
+              <span><b>{chosen.length}</b> selected</span>
+              <button onClick={() => setMoving(true)}><FolderInput size={14} /> Move to…</button>
+              <button className="danger" onClick={() => void deleteSelected()}><Trash size={14} /> Delete</button>
+              <span className="spacer" />
+              <button className="icon-btn" title="Clear selection" onClick={() => setSelected(new Set())}><X size={14} /></button>
+            </div>
+          )}
+          {!isMobile && !chosen.length && items.length > 1 && (
+            <p className="muted small hint">Tip: select several with the checkboxes (Shift for a range), or drag credentials onto a folder.</p>
+          )}
           {isLoading ? <p className="muted">Loading…</p> : (
-            <table className="grid stack">
-              <thead><tr><th>Name</th><th>Username</th><th>Folder</th><th>Secrets</th><th>Used by</th><th>External</th><th>Changed</th><th /></tr></thead>
+            <table className="grid stack cred-table">
+              <thead><tr><th className="check-col">
+                <input type="checkbox" aria-label="Select all shown" checked={allShownSelected}
+                       ref={(el) => { if (el) el.indeterminate = chosen.length > 0 && !allShownSelected; }}
+                       onChange={() => setSelected(allShownSelected ? new Set() : new Set(items.map((c) => c.id)))} />
+              </th><th>Name</th><th>Username</th><th>Folder</th><th>Secrets</th><th>Used by</th><th>External</th><th>Changed</th><th /></tr></thead>
               <tbody>
                 {items.map((c) => (
-                  <tr key={c.id}>
+                  <tr key={c.id} className={selected.has(c.id) ? 'selected' : ''} draggable={!isMobile}
+                      onDragStart={(e) => {
+                        // a selected row drags the whole selection
+                        const ids = selected.has(c.id) ? chosen.map((x) => x.id) : [c.id];
+                        e.dataTransfer.setData(DRAG_CREDENTIALS, JSON.stringify(ids));
+                        e.dataTransfer.effectAllowed = 'move';
+                        setDragging({ kind: 'credentials', ids });
+                      }}
+                      onDragEnd={() => setDragging(null)}>
+                    <td className="check-col" data-label="Select">
+                      <input type="checkbox" aria-label={`Select ${c.name}`} checked={selected.has(c.id)}
+                             onChange={(e) => toggle(c, (e.nativeEvent as MouseEvent).shiftKey === true)} />
+                    </td>
                     <td className="stack-title"><b>{c.name}</b>{c.description && <div className="muted small">{c.description}</div>}</td>
                     <td data-label="Username">{c.domain ? `${c.domain}\\` : ''}{c.username ?? <span className="muted">—</span>}</td>
                     <td data-label="Folder" className="small muted">{c.folder_id ? folderPath(folders, c.folder_id) : '—'}</td>
@@ -544,7 +729,7 @@ export function CredentialsView() {
                     </td>
                   </tr>
                 ))}
-                {!items.length && <tr><td colSpan={8} className="muted">No credentials{current ? ' in this folder' : ''}.</td></tr>}
+                {!items.length && <tr><td colSpan={9} className="muted">No credentials{current ? ' in this folder' : ''}.</td></tr>}
               </tbody>
             </table>
           )}
@@ -555,6 +740,8 @@ export function CredentialsView() {
       {revealing && <RevealDialog credential={revealing} onClose={() => setRevealing(null)} />}
       {mapping && <MappingsDialog credential={mapping} onClose={() => { setMapping(null); invalidate.credentials(); }} />}
       {acl && <AclDialog resourceType={acl.type} resourceId={acl.id} name={acl.name} onClose={() => setAcl(null)} />}
+      {moving && <MoveDialog count={chosen.length} folders={folders} onClose={() => setMoving(false)}
+                             onMove={(f) => { setMoving(false); void moveCredentials(chosen.map((c) => c.id), f); }} />}
     </div>
   );
 }

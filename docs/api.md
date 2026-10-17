@@ -57,6 +57,8 @@ The complete, generated specification is in [openapi.json](openapi.json)
 |---|---|---|
 | GET/POST | `/credentials` | list (metadata only) / create (all fields optional) |
 | GET/PATCH/DELETE | `/credentials/{id}` | metadata / update (write-only secrets; `null` clears) / delete |
+| POST | `/credentials/bulk/move` | `{ids, folder_id}` (`null` = no folder): move several credentials (each needs edit, the target folder edit) → `{done, failed: [{id, name, error}]}` |
+| POST | `/credentials/bulk/delete` | `{ids}`: delete several (each needs manage; credentials still in use are kept and listed in `failed`; a parent deleted with its children is fine) → `{done, failed}` |
 | POST | `/credentials/{id}/reveal` | reveal selected secret fields (needs `credentials.reveal` + manage; audited) |
 | GET | `/credentials/{id}/usage` | referencing connections and child credentials |
 | GET/PUT | `/credentials/{id}/mappings` | external secret mappings per field (`attr:<name>` fills an attribute, `secret:<name>` a secret attribute) |

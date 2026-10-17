@@ -14,8 +14,12 @@ from app import models as m
 from app.api.common import Paging, check_version, idempotency, page, paging
 from app.api.deps import Principal, get_access
 from app.db import get_db
-from app.errors import Conflict, Forbidden, NotFound, ValidationFailed
+from app.errors import AppError, Conflict, Forbidden, NotFound, ValidationFailed
 from app.schemas.core import (
+    BulkFailure,
+    BulkResult,
+    CredentialBulkIds,
+    CredentialBulkMove,
     CredentialCreate,
     CredentialOut,
     CredentialReveal,
@@ -249,9 +253,7 @@ async def update_credential(credential_id: uuid.UUID, body: CredentialUpdate,
     return await credential_out(db, cred, access)
 
 
-@router.delete("/{credential_id}", status_code=204, summary="Delete a credential entry")
-async def delete_credential(credential_id: uuid.UUID, principal: Principal = Depends(get_access),
-                            db: AsyncSession = Depends(get_db, scope="function")) -> None:
+async def _delete_one(db: AsyncSession, principal: Principal, credential_id: uuid.UUID) -> None:
     cred = await _get(db, principal.access, credential_id, "manage")
     used = (await db.execute(select(func.count()).select_from(m.Connection)
                              .where(m.Connection.credential_id == cred.id))).scalar_one()
@@ -263,6 +265,78 @@ async def delete_credential(credential_id: uuid.UUID, principal: Principal = Dep
     await db.delete(cred)
     await audit.record(db, "credential.delete", actor_id=principal.id, actor_name=principal.name,
                        resource_type="credential", resource_id=credential_id, details={"name": cred.name})
+
+
+@router.delete("/{credential_id}", status_code=204, summary="Delete a credential entry")
+async def delete_credential(credential_id: uuid.UUID, principal: Principal = Depends(get_access),
+                            db: AsyncSession = Depends(get_db, scope="function")) -> None:
+    await _delete_one(db, principal, credential_id)
+
+
+async def _names(db: AsyncSession, access: AccessContext, ids: list[uuid.UUID]) -> dict[uuid.UUID, str]:
+    """Names of the credentials the user may see (for error messages)."""
+    rows = (await db.execute(select(m.Credential.id, m.Credential.name).where(m.Credential.id.in_(ids)))).all()
+    return {cid: name for cid, name in rows if access.can("credential", cid, "view")}
+
+
+@router.post("/bulk/move", response_model=BulkResult, summary="Move several credentials into a folder",
+             description="Each credential needs 'edit'; the target folder needs 'edit'. Credentials that "
+                         "cannot be moved are listed in `failed`, the others are moved.")
+async def bulk_move_credentials(body: CredentialBulkMove, principal: Principal = Depends(get_access),
+                                db: AsyncSession = Depends(get_db, scope="function")) -> BulkResult:
+    access = principal.access
+    await check_folder_target(db, access, body.folder_id)
+    ids = list(dict.fromkeys(body.ids))
+    names = await _names(db, access, ids)
+    done: list[uuid.UUID] = []
+    failed: list[BulkFailure] = []
+    for cid in ids:
+        try:
+            cred = await _get(db, access, cid, "edit")
+        except AppError as exc:
+            failed.append(BulkFailure(id=cid, name=names.get(cid), error=exc.detail))
+            continue
+        if cred.folder_id != body.folder_id:
+            cred.folder_id = body.folder_id
+            cred.version += 1
+            await audit.record(db, "credential.update", actor_id=principal.id, actor_name=principal.name,
+                               resource_type="credential", resource_id=cid,
+                               details={"fields": ["folder_id"], "secrets_changed": [], "bulk": True})
+        done.append(cid)
+    await db.flush()
+    access.invalidate()
+    await access.load(db)
+    return BulkResult(done=done, failed=failed)
+
+
+@router.post("/bulk/delete", response_model=BulkResult, summary="Delete several credentials",
+             description="Each credential needs 'manage' and must not be in use (by connections, or by "
+                         "credentials that are not deleted with it). The others are deleted.")
+async def bulk_delete_credentials(body: CredentialBulkIds, principal: Principal = Depends(get_access),
+                                  db: AsyncSession = Depends(get_db, scope="function")) -> BulkResult:
+    ids = list(dict.fromkeys(body.ids))
+    names = await _names(db, principal.access, ids)
+    selected = set(ids)
+    done: list[uuid.UUID] = []
+    failed: list[BulkFailure] = []
+    # children before their parents: a parent deleted together with its children is free by then
+    parents = dict((await db.execute(select(m.Credential.id, m.Credential.parent_id)
+                                     .where(m.Credential.id.in_(ids)))).all())
+    depth = dict.fromkeys(ids, 0)
+    for cid in ids:
+        p, seen = parents.get(cid), {cid}
+        while p in selected and p not in seen:
+            depth[cid] += 1
+            seen.add(p)
+            p = parents.get(p)
+    for cid in sorted(ids, key=lambda c: -depth[c]):
+        try:
+            await _delete_one(db, principal, cid)
+            await db.flush()
+            done.append(cid)
+        except AppError as exc:
+            failed.append(BulkFailure(id=cid, name=names.get(cid), error=exc.detail))
+    return BulkResult(done=done, failed=failed)
 
 
 @router.post("/{credential_id}/reveal", response_model=CredentialSecrets,

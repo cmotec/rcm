@@ -268,3 +268,28 @@ def test_users_are_provisioned_with_roles(client, admin: UserClient) -> None:  #
 
     assert run_in_app_loop(client, roles_of_admin) == ["admin"]
     assert ADMIN_PASSWORD  # bootstrap admin exists and can log in (fixture)
+
+
+def test_bulk_move_and_delete_credentials(admin: UserClient) -> None:
+    folder = admin.post("/api/v1/credential-folders", json={"name": "bulk target"}).json()
+    parent = admin.post("/api/v1/credentials", json={"name": "bulk parent"}).json()
+    child = admin.post("/api/v1/credentials", json={"name": "bulk child", "parent_id": parent["id"]}).json()
+    used = admin.post("/api/v1/credentials", json={"name": "bulk used"}).json()
+    conn = admin.post("/api/v1/connections", json={"name": "bulk conn", "protocol": "ssh", "hostname": "h",
+                                                   "auth_mode": "credential", "credential_id": used["id"]})
+    assert conn.status_code == 201, conn.text
+    ids = [parent["id"], child["id"], used["id"]]
+    missing = str(uuid.uuid4())
+
+    r = admin.post("/api/v1/credentials/bulk/move", json={"ids": [*ids, missing], "folder_id": folder["id"]})
+    assert r.status_code == 200, r.text
+    assert set(r.json()["done"]) == set(ids) and [f["id"] for f in r.json()["failed"]] == [missing]
+    assert all(admin.get(f"/api/v1/credentials/{i}").json()["folder_id"] == folder["id"] for i in ids)
+    assert admin.post("/api/v1/credentials/bulk/move", json={"ids": ids, "folder_id": None}).json()["failed"] == []
+
+    # parent and child go together (child first); the credential a connection uses stays
+    r = admin.post("/api/v1/credentials/bulk/delete", json={"ids": ids}).json()
+    assert set(r["done"]) == {parent["id"], child["id"]}
+    assert [(f["id"], f["name"]) for f in r["failed"]] == [(used["id"], "bulk used")]
+    assert "referenced" in r["failed"][0]["error"]
+    assert admin.get(f"/api/v1/credentials/{parent['id']}").status_code == 404
