@@ -328,15 +328,16 @@ interface ProviderField {
   /** [value, label] pairs: shown as a dropdown */
   options?: [string, string][];
   defaultValue?: string;
-  /** a checkbox (stored as true/false), or a credential folder picker */
-  kind?: 'bool' | 'cred-folder';
+  /** a checkbox (stored as true/false), a credential folder picker, or a list (one entry per line) */
+  kind?: 'bool' | 'cred-folder' | 'lines';
   hint?: string;
 }
 
 function ProviderDialog({ provider, onClose }: { provider?: SecretProvider; onClose: () => void }) {
   const { data: credFolders } = useCredentialFolders();
   const [name, setName] = useState(provider?.name ?? '');
-  const [config, setConfig] = useState<Record<string, string>>(Object.fromEntries(Object.entries(provider?.config ?? {}).map(([k, v]) => [k, String(v ?? '')])));
+  const [config, setConfig] = useState<Record<string, string>>(Object.fromEntries(Object.entries(provider?.config ?? {})
+    .map(([k, v]) => [k, Array.isArray(v) ? v.join('\n') : String(v ?? '')])));
   const [secrets, setSecrets] = useState<Record<string, string>>({});
   const [interval, setSyncInterval] = useState(String(provider?.sync_interval_seconds ?? 900));
   const [enabled, setEnabled] = useState(provider?.enabled ?? true);
@@ -357,6 +358,11 @@ function ProviderDialog({ provider, onClose }: { provider?: SecretProvider; onCl
         ? [
           { key: 'import_path', label: 'Only secrets below this path (optional)', placeholder: 'e.g. servers/ (empty = whole mount)' },
           { key: 'import_folder_id', label: 'Into this credential folder (OpenBao sub-paths become sub-folders)', kind: 'cred-folder' as const },
+          { key: 'exclude', label: 'Skip these secrets (one per line)', kind: 'lines' as const,
+            placeholder: 'test/*\n*_old\nlegacy/web01',
+            hint: '* matches any text; a line matches the path below the mount (dmz/*) or the secret name (*_test). '
+              + 'Lines starting with # are comments. Skipped secrets never become credentials; credentials already '
+              + 'imported from them are deleted at the next sync if nothing uses them.' },
         ]
         : []),
     ];
@@ -366,6 +372,11 @@ function ProviderDialog({ provider, onClose }: { provider?: SecretProvider; onCl
     for (const f of configFields) {
       if (f.kind === 'bool') {
         cfg[f.key] = config[f.key] === 'true';
+        continue;
+      }
+      if (f.kind === 'lines') {
+        const lines = (config[f.key] ?? '').split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+        if (lines.length) cfg[f.key] = lines;
         continue;
       }
       const v = config[f.key] || f.defaultValue;
@@ -388,7 +399,13 @@ function ProviderDialog({ provider, onClose }: { provider?: SecretProvider; onCl
            footer={<>{error && <span className="form-error">{error}</span>}<button onClick={onClose}>Cancel</button><button className="primary" onClick={save}>Save</button></>}>
       {locked && <div className="banner info">Configured through environment variables; only enable/interval can be changed here.</div>}
       <label className="field"><span>Name</span><input value={name} disabled={locked} onChange={(e) => setName(e.target.value)} /></label>
-      {configFields.map((f) => f.kind === 'cred-folder' ? (
+      {configFields.map((f) => f.kind === 'lines' ? (
+        <label key={f.key} className="field"><span>{f.label}</span>
+          <textarea rows={5} className="mono" value={config[f.key] ?? ''} placeholder={f.placeholder} disabled={locked}
+                    spellCheck={false} onChange={(e) => setConfig({ ...config, [f.key]: e.target.value })} />
+          {f.hint && <small className="muted">{f.hint}</small>}
+        </label>
+      ) : f.kind === 'cred-folder' ? (
         <label key={f.key} className="field"><span>{f.label}</span>
           <CredentialFolderSelect folders={credFolders ?? []} value={config[f.key] ?? ''} disabled={locked}
                                   emptyLabel="— top level —" onChange={(id) => setConfig({ ...config, [f.key]: id })} />

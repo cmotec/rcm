@@ -1,7 +1,7 @@
 import { ShieldAlert, TriangleAlert } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
-import { folderPath, folderSubtree, useCredentialFolders, useCredentials } from '../../api/hooks';
-import type { Protocol } from '../../api/types';
+import { folderPath, folderSubtree, useCredentialFolders, useCredentials, usePersonalAccounts } from '../../api/hooks';
+import type { PersonalAccount, PersonalAccountKind, Protocol } from '../../api/types';
 import { type DialogRequest, type InteractiveCredentials, useDialogStore } from '../../state/dialogs';
 import { Modal } from './Modal';
 
@@ -39,6 +39,7 @@ function PromptDialog({ req }: { req: Extract<DialogRequest, { kind: 'prompt' }>
 
 function CredentialsDialog({ req }: { req: Extract<DialogRequest, { kind: 'credentials' }> }) {
   const [v, setV] = useState<InteractiveCredentials>({ username: req.username ?? '', password: '', domain: req.domain ?? '' });
+  const accounts = useConfiguredAccounts();
   const submit = () => {
     const out: InteractiveCredentials = {};
     if (v.username) out.username = v.username;
@@ -68,6 +69,17 @@ function CredentialsDialog({ req }: { req: Extract<DialogRequest, { kind: 'crede
         )}
         <button type="submit" hidden />
       </form>
+      {accounts.length > 0 && (
+        <div className="account-shortcuts">
+          <span className="muted">Or sign in with</span>
+          {accounts.map((a) => (
+            <button key={a.kind} type="button" onClick={() => req.resolve({ mode: 'account', account: a.kind })}
+                    title={accountLogin(a)}>
+              {ACCOUNT_LABELS[a.kind]}
+            </button>
+          ))}
+        </div>
+      )}
     </Modal>
   );
 }
@@ -141,6 +153,44 @@ function typedCredentials(v: InteractiveCredentials): InteractiveCredentials {
   return out;
 }
 
+const ACCOUNT_LABELS: Record<PersonalAccountKind, string> = {
+  user: 'My user account',
+  privileged: 'My privileged account',
+};
+
+/** domain\user, or what is set of it. */
+function accountLogin(a: PersonalAccount): string {
+  return `${a.domain ? `${a.domain}\\` : ''}${a.username ?? ''}` || '(password only)';
+}
+
+/** The user's personal accounts that have something stored (Profile → My accounts). */
+function useConfiguredAccounts(): PersonalAccount[] {
+  const { data } = usePersonalAccounts();
+  return (data ?? []).filter((a) => a.username || a.domain || a.has_password);
+}
+
+/** "My accounts": the user's own user / privileged login from their profile. */
+function AccountChoice({ accounts, loading, selected, onSelect, onPick }: {
+  accounts: PersonalAccount[]; loading: boolean; selected: PersonalAccountKind | null;
+  onSelect: (k: PersonalAccountKind) => void; onPick: (k: PersonalAccountKind) => void;
+}) {
+  if (loading) return <p className="muted">Loading…</p>;
+  if (!accounts.length) {
+    return <p className="banner warn">You have not stored your accounts yet. Add them under Profile → My accounts.</p>;
+  }
+  return (
+    <ul className="choice-list" role="listbox">
+      {accounts.map((a) => (
+        <li key={a.kind} role="option" aria-selected={selected === a.kind} className={selected === a.kind ? 'active' : ''}
+            onClick={() => onSelect(a.kind)} onDoubleClick={() => onPick(a.kind)}>
+          <b>{ACCOUNT_LABELS[a.kind]}</b>
+          <span className="muted">{accountLogin(a)}{a.has_password ? '' : ' (no password)'}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 function ChooseCredentialDialog({ req }: { req: Extract<DialogRequest, { kind: 'choose-credential' }> }) {
   const { data, isLoading } = useCredentials();
   const { data: folders } = useCredentialFolders();
@@ -151,14 +201,20 @@ function ChooseCredentialDialog({ req }: { req: Extract<DialogRequest, { kind: '
     .filter((c) => !allowedFolders || Boolean(c.folder_id && allowedFolders.has(c.folder_id)));
   const shown = usable.filter((c) => !filter || `${c.name} ${c.username ?? ''} ${c.domain ?? ''}`.toLowerCase().includes(filter.toLowerCase()));
   const [selected, setSelected] = useState<string | null>(null);
-  const [tab, setTab] = useState<'store' | 'own' | null>(null);
+  const [tab, setTab] = useState<'store' | 'account' | 'own' | null>(null);
   const [own, setOwn] = useState<InteractiveCredentials>({ username: '', password: '', domain: '' });
-  // nothing to choose from: start on "Enter credentials"
-  const active = tab ?? (!isLoading && !usable.length ? 'own' : 'store');
-  const valid = active === 'store' ? Boolean(selected) : Boolean(own.username || own.password);
+  const { isLoading: accountsLoading } = usePersonalAccounts();
+  const accounts = useConfiguredAccounts();
+  const [account, setAccount] = useState<PersonalAccountKind | null>(null);
+  const chosenAccount = account ?? (accounts.length === 1 ? accounts[0].kind : null);
+  // nothing in the store to choose from: start on "My accounts", or on "Enter credentials"
+  const active = tab ?? (isLoading || usable.length ? 'store' : accountsLoading || accounts.length ? 'account' : 'own');
+  const valid = active === 'store' ? Boolean(selected)
+    : active === 'account' ? Boolean(chosenAccount) : Boolean(own.username || own.password);
   const submit = () => {
     if (!valid) return;
     if (active === 'store') req.resolve({ mode: 'credential', credential_id: selected! });
+    else if (active === 'account') req.resolve({ mode: 'account', account: chosenAccount! });
     else req.resolve({ mode: 'own', credentials: typedCredentials(own) });
   };
   return (
@@ -170,10 +226,18 @@ function ChooseCredentialDialog({ req }: { req: Extract<DialogRequest, { kind: '
       <div className="tabs-inline" role="tablist">
         <button role="tab" aria-selected={active === 'store'} className={active === 'store' ? 'active' : ''}
                 onClick={() => setTab('store')}>Credential store</button>
+        <button role="tab" aria-selected={active === 'account'} className={active === 'account' ? 'active' : ''}
+                onClick={() => setTab('account')}>My accounts</button>
         <button role="tab" aria-selected={active === 'own'} className={active === 'own' ? 'active' : ''}
                 onClick={() => setTab('own')}>Enter credentials</button>
       </div>
-      {active === 'store' ? (
+      {active === 'account' ? (
+        <>
+          <p className="muted">Sign in with one of your own accounts from your profile.</p>
+          <AccountChoice accounts={accounts} loading={accountsLoading} selected={chosenAccount} onSelect={setAccount}
+                         onPick={(k) => req.resolve({ mode: 'account', account: k })} />
+        </>
+      ) : active === 'store' ? (
         <>
           <p className="muted">Choose the credential to use for this session
             {req.folderId ? <> (from <b>{folderPath(folders ?? [], req.folderId) || 'its folder'}</b>)</> : null}.</p>
@@ -205,14 +269,23 @@ function ChooseCredentialDialog({ req }: { req: Extract<DialogRequest, { kind: '
 function OpenWithDialog({ req }: { req: Extract<DialogRequest, { kind: 'open-with' }> }) {
   const { data } = useCredentials();
   const usable = (data?.items ?? []).filter((c) => ['connect', 'edit', 'manage'].includes(c.permission ?? ''));
-  const [mode, setMode] = useState<'own' | 'credential'>('own');
+  const [mode, setMode] = useState<'own' | 'account' | 'credential'>('own');
   const [v, setV] = useState<InteractiveCredentials>({ username: '', password: '', domain: '' });
   const [credId, setCredId] = useState<string | null>(null);
-  const valid = mode === 'own' ? Boolean(v.username || v.password) : Boolean(credId);
+  const { isLoading: accountsLoading } = usePersonalAccounts();
+  const accounts = useConfiguredAccounts();
+  const [account, setAccount] = useState<PersonalAccountKind | null>(null);
+  const chosenAccount = account ?? (accounts.length === 1 ? accounts[0].kind : null);
+  const valid = mode === 'own' ? Boolean(v.username || v.password)
+    : mode === 'account' ? Boolean(chosenAccount) : Boolean(credId);
   const submit = () => {
     if (!valid) return;
     if (mode === 'credential') {
       req.resolve({ mode: 'credential', credential_id: credId! });
+      return;
+    }
+    if (mode === 'account') {
+      req.resolve({ mode: 'account', account: chosenAccount! });
       return;
     }
     req.resolve({ mode: 'own', credentials: typedCredentials(v) });
@@ -224,18 +297,25 @@ function OpenWithDialog({ req }: { req: Extract<DialogRequest, { kind: 'open-wit
              <button className="primary" disabled={!valid} onClick={submit}>Connect</button>
            </>}>
       <p className="muted">Used for this session only, instead of the connection's configured login.</p>
-      <div className="radio-cards two">
-        <label className={`radio-card ${mode === 'own' ? 'active' : ''}`}>
-          <input type="radio" name="open-with" checked={mode === 'own'} onChange={() => setMode('own')} />
-          <b>Enter credentials</b><small>Typed now, not stored.</small>
-        </label>
+      <div className="radio-cards three">
         <label className={`radio-card ${mode === 'credential' ? 'active' : ''}`}>
           <input type="radio" name="open-with" checked={mode === 'credential'} onChange={() => setMode('credential')} />
           <b>Credential store</b><small>Any entry you are allowed to use.</small>
         </label>
+        <label className={`radio-card ${mode === 'account' ? 'active' : ''}`}>
+          <input type="radio" name="open-with" checked={mode === 'account'} onChange={() => setMode('account')} />
+          <b>My accounts</b><small>Your user or privileged account.</small>
+        </label>
+        <label className={`radio-card ${mode === 'own' ? 'active' : ''}`}>
+          <input type="radio" name="open-with" checked={mode === 'own'} onChange={() => setMode('own')} />
+          <b>Enter credentials</b><small>Typed now, not stored.</small>
+        </label>
       </div>
       {mode === 'own' ? (
         <OwnCredentialsForm protocol={req.protocol} value={v} onChange={setV} onSubmit={submit} />
+      ) : mode === 'account' ? (
+        <AccountChoice accounts={accounts} loading={accountsLoading} selected={chosenAccount} onSelect={setAccount}
+                       onPick={(k) => req.resolve({ mode: 'account', account: k })} />
       ) : (
         <>
           {!usable.length && <p className="banner warn">You have no credentials you are allowed to use.</p>}

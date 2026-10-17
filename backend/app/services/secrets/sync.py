@@ -221,7 +221,7 @@ async def sync_provider(db: AsyncSession, provider: m.SecretProvider, settings: 
             if credential_id is None and (provider.config or {}).get("auto_import"):
                 found = await discover(db, client, provider, actor_id=actor_id)
                 stats.update(found)
-                if found["created"] or found["linked"] or found["keys_added"]:
+                if found["created"] or found["linked"] or found["keys_added"] or found.get("deleted_gone"):
                     await audit.record(db, "secret_provider.auto_import", actor_id=actor_id, actor_name=actor_name,
                                        resource_type="secret_provider", resource_id=provider.id, details=found)
             mappings = (await db.execute(stmt)).scalars().all()
@@ -283,7 +283,9 @@ async def ensure_env_providers(db: AsyncSession, settings: Settings) -> None:
                       {"url": settings.OPENBAO_URL, "namespace": settings.OPENBAO_NAMESPACE,
                        "mount": settings.OPENBAO_KV_MOUNT, "auth_method": settings.OPENBAO_AUTH_METHOD,
                        "auto_import": settings.OPENBAO_AUTO_IMPORT or None,
-                       "import_path": settings.OPENBAO_IMPORT_PATH or None},
+                       "import_path": settings.OPENBAO_IMPORT_PATH or None,
+                       "exclude": [p.strip() for p in settings.OPENBAO_IMPORT_EXCLUDE.split(",") if p.strip()]
+                       or None},
                       {"token": settings.OPENBAO_TOKEN, "role_id": settings.OPENBAO_ROLE_ID,
                        "secret_id": settings.OPENBAO_SECRET_ID}))
     for name, ptype, config, secrets in specs:

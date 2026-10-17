@@ -1,12 +1,13 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { get } from './client';
-import type { Credential, CredentialFolder, EffectiveConnection, Me, Page, Tree } from './types';
+import type { Credential, CredentialFolder, EffectiveConnection, Me, Page, PersonalAccount, Tree } from './types';
 
 export const keys = {
   me: ['me'] as const,
   tree: ['tree'] as const,
   credentials: ['credentials'] as const,
   credentialFolders: ['credential-folders'] as const,
+  personalAccounts: ['personal-accounts'] as const,
   effective: (id: string) => ['effective', id] as const,
 };
 
@@ -33,6 +34,16 @@ export function useCredentialFolders(enabled = true) {
     queryFn: () => get<CredentialFolder[]>('/api/v1/credential-folders'),
     enabled,
     staleTime: 15_000,
+  });
+}
+
+/** The user's own user / privileged account (always both kinds, empty when not set up). */
+export function usePersonalAccounts(enabled = true) {
+  return useQuery({
+    queryKey: keys.personalAccounts,
+    queryFn: () => get<PersonalAccount[]>('/api/v1/me/accounts'),
+    enabled,
+    staleTime: 60_000,
   });
 }
 

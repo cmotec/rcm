@@ -4,7 +4,7 @@
 
 | Container | Image | Purpose | Exposed |
 |---|---|---|---|
-| `web` | `remote-connections-manager-web`, from `frontend/` (nginx-unprivileged) | serves the SPA, reverse-proxies `/api` (incl. WebSockets) | published port (`HTTP_PORT`, default 8080) |
+| `web` | `remote-connections-manager-web`, from `frontend/` (nginx-unprivileged) | serves the SPA over HTTPS, reverse-proxies `/api` (incl. WebSockets) | `HTTPS_PORT` (default 8443; HTTPS only, no HTTP port) |
 | `api` | `remote-connections-manager-api`, from `backend/` (python:3.12-slim, uid 10001) | REST API, WebSocket tunnels, SSH/SFTP/FTP, secret sync | internal only |
 | `guacd` | `remote-connections-manager-guacd`, from `guacd/` (`guacamole/guacd:1.6.0` + data directories owned by guacd, uid 1000) | RDP/VNC (and optional SSH) protocol gateway | **never published** |
 
@@ -40,7 +40,8 @@ data lives in the volume `pgdata` (back it up, see docs/backup-restore.md).
   CREATE DATABASE connections OWNER connections;
   ```
 * An OIDC client in Authentik (see §4) or a local recovery admin.
-* A DNS name and a TLS-terminating reverse proxy (see §5).
+* A DNS name. HTTPS is built in (self-signed by default, or your own certificate, see §5); a
+  reverse proxy in front is optional.
 
 ### Images and compose files
 
@@ -150,13 +151,75 @@ Users without any mapped role are refused (`OIDC_DEFAULT_ROLE=none`).
 
 ## 5. TLS
 
-The web container serves plain HTTP on port 8080 (published as `HTTP_PORT`). Terminate TLS at a
-reverse proxy (Traefik, Caddy, Nginx Proxy Manager, HAProxy, …): forward to the web container,
-keep the `Host` header, allow WebSocket upgrades, and use long read timeouts (≥ 1 h, remote
-sessions are long-lived WebSockets).
+The web container serves HTTPS only (container port 8443, published as `HTTPS_PORT`, default
+8443). There is no plain-HTTP port and no redirect: open `https://…` directly.
 
-Set `APP_URL=https://…` and `COOKIE_SECURE=true`. Cookies then use the `__Host-` prefix and
-browsers will not send them over HTTP.
+| Variable | Default | Meaning |
+|---|---|---|
+| `HTTPS_PORT` | `8443` | published HTTPS port |
+| `HTTP_BIND` | `0.0.0.0` | address the port is published on (`127.0.0.1`: only a reverse proxy on the same host) |
+| `TLS_CERT_DIR` | volume `web-certs` | certificate directory, mounted at `/etc/nginx/certs` |
+| `TLS_SELF_SIGNED_NAME` | host of `APP_URL` | name (CN/SAN) of the generated self-signed certificate |
+
+`APP_URL` must be the URL users actually open, including the port when it is not 443:
+`APP_URL=https://rcm.example.com:8443`. Keep `COOKIE_SECURE=true`: cookies then use the `__Host-`
+prefix and browsers never send them over plain HTTP.
+
+### Certificate selection (at every container start)
+
+1. `tls.crt` **and** `tls.key` in the certificate directory → used as they are.
+2. Otherwise a self-signed certificate (RSA 3072, valid 825 days) is created there as
+   `self-signed.crt`/`self-signed.key`, for the `APP_URL` host (or `TLS_SELF_SIGNED_NAME`) plus
+   `localhost` and `127.0.0.1`. It is kept across restarts and upgrades, so a browser exception
+   stays valid. It is renewed automatically 30 days before it expires or when the name changes.
+   The SHA-256 fingerprint is printed in the container log (`docker compose logs web`) to compare
+   with what the browser shows.
+
+Browsers warn about a self-signed certificate; the traffic is still encrypted. Use a certificate
+from a public or internal CA to get rid of the warning (an internal CA must be trusted by the
+clients).
+
+### Installing your own certificate
+
+`tls.crt` is the PEM certificate **followed by the intermediate certificates** (full chain),
+`tls.key` the unencrypted PEM private key. Both must be readable for uid 101 (the nginx user).
+
+Default (named volume `web-certs`):
+
+```bash
+# written by the nginx user, so the permissions are right
+docker compose exec -T web sh -c 'cat > /etc/nginx/certs/tls.crt' < fullchain.pem
+docker compose exec -T web sh -c 'umask 077; cat > /etc/nginx/certs/tls.key' < privkey.pem
+docker compose restart web
+```
+
+If `tls.crt`/`tls.key` are unreadable, invalid or do not belong together, the container logs an
+`ERROR` and keeps running with the self-signed certificate instead.
+
+With a host directory (convenient for renewals by certbot, acme.sh or a deploy script), set
+`TLS_CERT_DIR=/srv/rcm/certs` in `.env`:
+
+```bash
+mkdir -p /srv/rcm/certs
+cp fullchain.pem /srv/rcm/certs/tls.crt
+cp privkey.pem   /srv/rcm/certs/tls.key
+chown -R 101:101 /srv/rcm/certs && chmod 0600 /srv/rcm/certs/tls.key
+docker compose up -d web          # restart web after every renewal
+```
+
+Removing `tls.crt`/`tls.key` and restarting falls back to the self-signed certificate.
+
+### Behind a reverse proxy
+
+A reverse proxy (Traefik, Caddy, Nginx Proxy Manager, HAProxy, …) can still terminate TLS in
+front: forward to the HTTPS port (`https://web:8443`, or the published port) and skip certificate
+verification for that hop, or trust the self-signed certificate. The traffic stays encrypted up to
+the container.
+
+Keep the `Host` header, allow WebSocket upgrades, use long read timeouts (≥ 1 h, remote sessions
+are long-lived WebSockets), and set `APP_URL` to the URL of the proxy. If only the proxy needs the
+port, publish it on localhost (`HTTP_BIND=127.0.0.1`) or remove the mapping when the proxy is on
+the same Docker network.
 
 ## 6. Trust stores
 

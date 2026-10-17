@@ -24,6 +24,8 @@ class OpenBaoConfig(BaseModel):
     import_path: str = ""
     # credential folder that mirrors the OpenBao paths of imported secrets (None = top level)
     import_folder_id: str | None = None
+    # secrets left out of the import: one pattern per entry, * = any text, path below the mount or name
+    exclude: list[str] = []
 
 
 class OpenBaoSecrets(BaseModel):
@@ -100,6 +102,17 @@ class OpenBaoClient(SecretProviderClient):
             return None
         value = data.get(ref.key)
         return None if value is None else str(value)
+
+    async def is_deleted(self, path: str) -> bool:
+        """KV v2 keeps a deleted secret's metadata, so it is still listed; its data reads as 404 or null.
+        Anything else (e.g. 403: no read permission) is not taken as deleted."""
+        resp = await self._request("GET", self._data_url(path), headers=await self._headers())
+        if resp.status_code == 404:
+            return True
+        if resp.status_code != 200:
+            return False
+        body = resp.json().get("data") or {}
+        return self.config.kv_version == 2 and body.get("data") is None  # type: ignore[attr-defined]
 
     async def browse(self, path: str) -> list[BrowseItem]:
         headers = await self._headers()

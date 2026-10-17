@@ -45,12 +45,21 @@ provider from environment variables), every full sync walks the KV mount, or onl
 
   A secret with a single key that matches none of these, for example a key without a name, is
   taken as the password. Secrets without any usable key are skipped.
+* a secret **without a username key** gets its **name as the username** (secret `root` → username
+  `root`). If the secret gets a username key later, that key takes over at the next sync; a username
+  you typed in yourself is never replaced.
 * every **other key** becomes a credential **attribute** (`attr:<key>`): values such as `port`,
   `description` or `hostname` that connections read with lookups, e.g. `{{lookup:{hostname}_root:port}}`.
   Attributes are encrypted at rest and visible to everyone who may view the credential.
 * keys whose name looks secret (containing token, secret, key, pass, pin, cert, private, auth, …)
   become **secret attributes** (`secret:<key>`): encrypted, write-only like the password, never shown,
   used only by sessions through lookups (and viewable with the audited *Reveal*).
+* **skipped secrets:** *Skip these secrets* (`exclude`, or `OPENBAO_IMPORT_EXCLUDE` comma separated)
+  takes one pattern per line: `*` matches any text, a line matches the path below the mount
+  (`dmz/*`, `legacy/web01`) or just the secret's name (`*_test`), case-insensitively; `#` starts a
+  comment. Skipped secrets never become credentials and are never linked by name. Credentials the
+  import already created for them are deleted at the next sync if nothing uses them (no connection,
+  no child credential, no other mapping); otherwise only their link to the provider is removed.
 * **folders:** choose a credential folder in the provider settings; the secret's path below
   *import path* is mirrored as sub-folders there (`infrastructure/dmz/web01` → `<folder>/dmz/web01`).
   Without a folder, the structure starts at the top level. Only newly created credentials are placed;
@@ -59,10 +68,18 @@ provider from environment variables), every full sync walks the KV mount, or onl
   get mappings on the next sync.
 * a credential that already has the secret's name, and is not linked to this provider yet, is linked
   instead of creating a second one. Local values that differ become conflicts; nothing is
-  overwritten silently.
-* credentials are never deleted by the import. When a secret is removed, its mappings show
-  `remote_missing`. A deleted auto-imported credential comes back on the next sync while the secret
-  still exists; limit the import with *import path* instead.
+  overwritten silently. From then on the import manages it like one it created.
+* **removed secrets:** when a secret below *import path* is no longer in the provider (deleted, also a
+  KV v2 soft delete), the credential the import created or linked for it is **deleted** at the next
+  full sync (audited as `credential.delete`, reason "secret removed from the provider"; the sync
+  result counts it as `deleted_gone`). It is kept, with its mappings showing `remote_missing`, while a
+  connection or another credential still uses it or another secret still feeds it (`kept_in_use`);
+  it is deleted at a later sync once it is free. Nothing is deleted when the walk is incomplete: a
+  listing error fails the sync, and above 2000 secrets this step is skipped. Credentials you mapped
+  by hand are never deleted, and the last secret of a mount cannot be detected as removed (OpenBao
+  answers an empty mount like an unknown one, which fails the sync).
+* a deleted auto-imported credential comes back on the next sync while the secret still exists;
+  use *Skip these secrets* or *import path* to keep it out.
 
 New credentials belong to the user who started the sync; scheduled syncs create them without an
 owner, so only administrators (and explicit grants) see them until permissions are set.

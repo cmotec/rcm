@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 import asyncssh
@@ -132,13 +132,22 @@ async def verify_host_key(
 
 
 def _client_keys(launch: LaunchConfig) -> list[asyncssh.SSHKey] | None:
+    """The private key, if any. A key that cannot be loaded is skipped when there is a password to
+    fall back to (the password is used instead); without one it is an error."""
     if not launch.private_key:
         return None
     try:
         return [asyncssh.import_private_key(launch.private_key, launch.passphrase or None)]
     except (asyncssh.KeyImportError, ValueError, TypeError) as exc:
         hint = "missing or wrong passphrase" if "passphrase" in str(exc).lower() else str(exc)
+        if launch.password:
+            log.warning("ssh_private_key_skipped", connection_id=str(launch.connection_id), reason=hint[:200])
+            return None
         raise ValidationFailed(f"private key could not be loaded: {hint}", code="private_key_invalid") from exc
+
+
+# A private key is tried first; the password (also via keyboard-interactive) is the fallback.
+KEY_FIRST_AUTH = "publickey,keyboard-interactive,password"
 
 
 async def connect(
@@ -147,8 +156,11 @@ async def connect(
     settings: Settings,
     *,
     tunnel: asyncssh.SSHClientConnection | None = None,
+    preferred_auth: str = KEY_FIRST_AUTH,
 ) -> asyncssh.SSHClientConnection:
-    """Connect, trusting only ``host_keys`` (the server is asked to use one of their algorithms)."""
+    """Connect, trusting only ``host_keys`` (the server is asked to use one of their algorithms).
+
+    With a private key and a password, the key is tried first and the password is the fallback."""
     if not launch.username:
         raise ValidationFailed("no username configured or entered for this SSH connection", code="username_required")
     s = launch.settings
@@ -168,6 +180,7 @@ async def connect(
                 username=launch.username,
                 password=launch.password or None,
                 client_keys=_client_keys(launch),
+                preferred_auth=preferred_auth,
                 agent_path=None,
                 known_hosts=(list(host_keys), [], []),
                 server_host_key_algs=algs,
@@ -241,26 +254,54 @@ async def trusted_key(db: AsyncSession, host: str, port: int) -> list[asyncssh.S
 
 
 async def open_connection_set(
-    db: AsyncSession, launch: LaunchConfig, settings: Settings
+    db: AsyncSession, launch: LaunchConfig, settings: Settings, *, preferred_auth: str = KEY_FIRST_AUTH
 ) -> SshConnectionSet:
-    """Connect (via jump host if configured) using only already-trusted host keys."""
+    """Connect (via jump host if configured) using only already-trusted host keys.
+
+    ``preferred_auth`` applies to the target only; the jump host always tries key, then password."""
 
     async def _connect_trusted(
-        target: LaunchConfig, tunnel: asyncssh.SSHClientConnection | None
+        target: LaunchConfig, tunnel: asyncssh.SSHClientConnection | None, auth: str = KEY_FIRST_AUTH
     ) -> asyncssh.SSHClientConnection:
         keys = await trusted_key(db, target.host, target.port)
         if not keys:
             raise HostKeyIssue("host key is not trusted yet; reopen the connection to confirm it",
                                code="hostkey_unknown")
-        return await connect(target, keys, settings, tunnel=tunnel)
+        return await connect(target, keys, settings, tunnel=tunnel, preferred_auth=auth)
 
     jump_conn = None
     if launch.jump is not None:
         jump_conn = await _connect_trusted(launch.jump, None)
     try:
-        conn = await _connect_trusted(launch, jump_conn)
+        conn = await _connect_trusted(launch, jump_conn, preferred_auth)
     except BaseException:
         if jump_conn is not None:
             jump_conn.close()
         raise
     return SshConnectionSet(conn=conn, jump=jump_conn)
+
+
+async def choose_guacd_ssh_auth(db: AsyncSession, launch: LaunchConfig, settings: Settings) -> None:
+    """guacd's SSH client uses only the private key when one is given, with no password fallback.
+
+    With both a key and a password, check the key here first (key-only login, closed right away);
+    if the key cannot be loaded or the server rejects it, guacd gets just the password.
+    """
+    if not (launch.private_key and launch.password):
+        return
+    try:
+        asyncssh.import_private_key(launch.private_key, launch.passphrase or None)
+    except (asyncssh.KeyImportError, ValueError, TypeError) as exc:
+        log.warning("ssh_private_key_skipped", connection_id=str(launch.connection_id), reason=str(exc)[:200])
+        launch.private_key = launch.passphrase = None
+        return
+    # the same route guacd takes: through the jump host / SSH tunnel endpoint, if any
+    probe = replace(launch, password=None, jump=launch.jump or launch.tunnel_via, tunnel_via=None)
+    try:
+        conns = await open_connection_set(db, probe, settings, preferred_auth="publickey")
+    except RemoteAuthFailed:
+        log.info("ssh_private_key_rejected", connection_id=str(launch.connection_id))
+        launch.private_key = launch.passphrase = None
+        return
+    conns.close()
+    await conns.wait_closed()

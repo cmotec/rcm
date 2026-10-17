@@ -34,6 +34,8 @@ The complete, generated specification is in [openapi.json](openapi.json)
 | GET | `/auth/me` | current user, roles, permissions, CSRF token |
 | GET/PUT | `/me/preferences` | user preferences (incl. saved workspace layout) |
 | GET/POST/DELETE | `/me/tokens[/{id}]` | personal API tokens |
+| GET | `/me/accounts` | my personal accounts (`user`, `privileged`): username, domain, `has_password` (passwords are never returned) |
+| PUT/DELETE | `/me/accounts/{user\|privileged}` | set (`username`, `domain`, `password` – omitted = unchanged, `clear_password`) or remove one |
 | POST | `/me/logout-everywhere` | end all browser and remote sessions |
 
 ### Tree, folders, connections
@@ -55,6 +57,8 @@ The complete, generated specification is in [openapi.json](openapi.json)
 |---|---|---|
 | GET/POST | `/credentials` | list (metadata only) / create (all fields optional) |
 | GET/PATCH/DELETE | `/credentials/{id}` | metadata / update (write-only secrets; `null` clears) / delete |
+| POST | `/credentials/bulk/move` | `{ids, folder_id}` (`null` = no folder): move several credentials (each needs edit, the target folder edit) → `{done, failed: [{id, name, error}]}` |
+| POST | `/credentials/bulk/delete` | `{ids}`: delete several (each needs manage; credentials still in use are kept and listed in `failed`; a parent deleted with its children is fine) → `{done, failed}` |
 | POST | `/credentials/{id}/reveal` | reveal selected secret fields (needs `credentials.reveal` + manage; audited) |
 | GET | `/credentials/{id}/usage` | referencing connections and child credentials |
 | GET/PUT | `/credentials/{id}/mappings` | external secret mappings per field (`attr:<name>` fills an attribute, `secret:<name>` a secret attribute) |
@@ -72,7 +76,7 @@ The complete, generated specification is in [openapi.json](openapi.json)
 ### Sessions
 | Method | Path | Description |
 |---|---|---|
-| POST | `/sessions` | start a session. `428 credentials_required` → resend with `credentials`. `428 credential_choice_required` → resend with `credential_id` (a credential the user may use). `auth_override` (`{mode: "own", credentials}` or `{mode: "credential", credential_id}`) replaces the configured login for this session only ("Open with different credentials"). `409 hostkey_unknown/hostkey_changed` (body has `host_key`) → resend with `accept_host_keys` |
+| POST | `/sessions` | start a session. `428 credentials_required` → resend with `credentials`. `428 credential_choice_required` → resend with `credential_id` (a credential the user may use). `auth_override` (`{mode: "own", credentials}`, `{mode: "credential", credential_id}` or `{mode: "account", account: "user"|"privileged"}` – one of the caller's personal accounts) replaces the configured login for this session only ("Open with different credentials"). `409 hostkey_unknown/hostkey_changed` (body has `host_key`) → resend with `accept_host_keys` |
 | GET | `/sessions[?scope=all]` | my sessions (or all, with `sessions.manage`) |
 | GET | `/sessions/{id}` | status |
 | POST | `/sessions/{id}/reconnect` | new one-time ticket (RDP/VNC/SSH) or reopen (file sessions) |

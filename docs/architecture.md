@@ -234,6 +234,10 @@ never changed.
 
 ### Credentials (field by field)
 Fields: `username`, `password`, `domain`, `private_key`, `passphrase`.
+SSH/SFTP with both a private key and a password: the key is tried first, the password is the
+fallback (also when the key cannot be loaded, e.g. wrong passphrase). guacd's SSH client has no
+fallback of its own, so for the guacd SSH engine the api first checks the key with a key-only login
+and hands guacd only the password if the key is rejected.
 `auth_mode` decides where a connection's own values come from:
 
 | `auth_mode` | Own values |

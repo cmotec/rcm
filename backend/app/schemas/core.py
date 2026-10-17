@@ -407,6 +407,25 @@ class CredentialOut(Out):
     secret_attribute_names: list[str] = []
 
 
+class CredentialBulkIds(Strict):
+    ids: list[uuid.UUID] = Field(min_length=1, max_length=1000)
+
+
+class CredentialBulkMove(CredentialBulkIds):
+    folder_id: uuid.UUID | None = Field(description="target credential folder; null = no folder")
+
+
+class BulkFailure(BaseModel):
+    id: uuid.UUID
+    name: str | None = None
+    error: str
+
+
+class BulkResult(BaseModel):
+    done: list[uuid.UUID]
+    failed: list[BulkFailure]
+
+
 class CredentialFolderCreate(Strict):
     name: str = Field(min_length=1, max_length=255)
     parent_id: uuid.UUID | None = None
@@ -490,12 +509,31 @@ class AcceptedHostKey(Strict):
     fingerprint: str = Field(min_length=10, max_length=128)
 
 
+PersonalAccountKind = Literal["user", "privileged"]
+
+
 class AuthOverrideIn(Strict):
     """Open with different credentials (this session only)."""
 
-    mode: Literal["own", "credential"]
+    mode: Literal["own", "credential", "account"]
     credentials: InteractiveCredentials | None = Field(None, description="mode 'own': typed values, never stored")
     credential_id: uuid.UUID | None = Field(None, description="mode 'credential': a credential the user may use")
+    account: PersonalAccountKind | None = Field(None, description="mode 'account': one of the user's personal accounts")
+
+
+class PersonalAccountIn(Strict):
+    username: str | None = Field(None, max_length=255)
+    domain: str | None = Field(None, max_length=255)
+    password: str | None = Field(None, max_length=4096, description="new password; omitted or empty = unchanged")
+    clear_password: bool = False
+
+
+class PersonalAccountOut(BaseModel):
+    kind: PersonalAccountKind
+    username: str | None = None
+    domain: str | None = None
+    has_password: bool = False
+    updated_at: datetime | None = None
 
 
 class SessionCreate(Strict):

@@ -32,6 +32,25 @@ const COMMAND_TO_CTRL = new Map([[0xffe7, 0xffe3], [0xffe8, 0xffe4], [0xffeb, 0x
 /** Shift_L/R, Alt_L/R, ISO_Level3_Shift (Option may arrive as either). */
 const COMPOSE_MODIFIERS = new Set([0xffe1, 0xffe2, 0xffe9, 0xffea, 0xfe03]);
 
+/**
+ * Whether the local clipboard can be read without the user's help. Chromium asks once
+ * ("clipboard-read" permission) and then reads silently. Safari (every iOS browser) and Firefox
+ * have no such permission and show a native "Paste" button for every read, so the clipboard is
+ * not read automatically there: Ctrl/⌘+V, the system paste and the clipboard dialog still work.
+ */
+let clipboardReadMode: Promise<boolean> | null = null;
+function silentClipboardRead(): Promise<boolean> {
+  clipboardReadMode ??= (async () => {
+    try {
+      const status = await navigator.permissions.query({ name: 'clipboard-read' as PermissionName });
+      return status.state !== 'denied';
+    } catch {
+      return false; // permission name unknown: the browser would ask on every read
+    }
+  })();
+  return clipboardReadMode;
+}
+
 /** A keysym that produces a character (Latin-1 or Unicode), as opposed to a function key. */
 function isCharacter(keysym: number): boolean {
   return (keysym >= 0x20 && keysym <= 0x7e) || (keysym >= 0xa0 && keysym <= 0xff) || keysym >= 0x01000000;
@@ -633,6 +652,7 @@ export class GuacSession extends BaseSession implements SpecialKeyTarget {
 
   private async pushLocalClipboard(): Promise<void> {
     if (this.settings.disable_paste || !this.client || !navigator.clipboard?.readText) return;
+    if (!(await silentClipboardRead())) return;
     try {
       const text = await navigator.clipboard.readText();
       if (text && text !== this.lastLocalClipboard && text !== this.remoteClipboard) this.sendClipboard(text);

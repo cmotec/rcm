@@ -184,3 +184,31 @@ def test_signage_account_only_connects_to_its_connection() -> None:
     assert not access.can("connection", other, "view")
     assert not access.can("folder", folder, "view") and not access.can("folder", None, "view")
     assert not access.can("credential", uuid.uuid4(), "view")
+
+
+# --------------------------------------------------------------------------- SSH: private key first, password fallback
+
+
+def test_unloadable_private_key_falls_back_to_the_password() -> None:
+    import asyncssh
+
+    from app.errors import ValidationFailed
+    from app.services.sessions.launch import LaunchConfig
+    from app.services.sessions.ssh_native import _client_keys
+
+    def launch(private_key: str | None, password: str | None, passphrase: str | None = None) -> LaunchConfig:
+        return LaunchConfig(connection_id=uuid.uuid4(), connection_name="x", protocol="ssh", host="h", port=22,
+                            original_host="h", host_note=None, username="u", password=password, domain=None,
+                            private_key=private_key, passphrase=passphrase, settings=None, auth_sources={},
+                            warnings=[])
+
+    key = asyncssh.generate_private_key("ssh-ed25519")
+    encrypted = key.export_private_key("openssh", passphrase="right").decode()
+    assert _client_keys(launch(None, "pw")) is None
+    assert len(_client_keys(launch(encrypted, "pw", "right")) or []) == 1
+    # wrong passphrase or garbage: the password is used instead ...
+    assert _client_keys(launch(encrypted, "pw", "wrong")) is None
+    assert _client_keys(launch("not a key", "pw")) is None
+    # ... and without a password it is an error
+    with pytest.raises(ValidationFailed):
+        _client_keys(launch(encrypted, None, "wrong"))

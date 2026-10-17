@@ -52,7 +52,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=None, case_sensitive=True, extra="ignore")
 
     # --- application -------------------------------------------------------
-    APP_URL: str = "http://localhost:8080"
+    APP_URL: str = "https://localhost:8443"
     ENVIRONMENT: Literal["production", "development", "test"] = "production"
     LOG_LEVEL: str = "INFO"
     LOG_FORMAT: Literal["json", "console"] = "json"
@@ -162,6 +162,8 @@ class Settings(BaseSettings):
     # every secret below OPENBAO_IMPORT_PATH becomes a credential entry (named after the secret)
     OPENBAO_AUTO_IMPORT: bool = False
     OPENBAO_IMPORT_PATH: str = ""
+    # secrets left out of the import, comma separated patterns (* = any text), e.g. "test/*,*_old"
+    OPENBAO_IMPORT_EXCLUDE: str = ""
 
     # --- limits & features -----------------------------------------------------
     RATE_LIMIT_LOGIN_PER_MINUTE: int = 10
