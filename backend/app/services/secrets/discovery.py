@@ -24,8 +24,14 @@ provider is walked from ``import_path``:
 
 Already linked secrets only get mappings for keys added since. A credential with the secret's name that
 is not linked to this provider yet is linked instead of creating a duplicate; local values that differ
-then become sync conflicts (never overwritten silently). Credentials are never deleted here: a secret
-removed in the provider shows up as ``remote_missing`` on its mappings.
+then become sync conflicts (never overwritten silently).
+
+Removed secrets: a credential the import manages (created or linked by it, see ``_managed_by``) whose
+secret is no longer in the provider (deleted, or a KV v2 soft delete) is deleted together with its
+mappings. It is kept, with its mappings showing ``remote_missing``, while connections or other
+credentials still use it or other secrets still feed it. Nothing is deleted after an incomplete walk
+(a listing error fails the whole sync; hitting ``MAX_SECRETS`` skips this step). Credentials that are
+only mapped by hand are never deleted.
 """
 
 from __future__ import annotations
@@ -40,6 +46,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import models as m
 from app.logging import get_logger
+from app.services import audit
 from app.services.credential_folders import ensure_folder_path
 from app.services.lookups import name_matcher
 from app.services.secrets.base import SecretProviderClient
@@ -135,6 +142,21 @@ def exclusion_matcher(patterns: list[str] | str | None):  # noqa: ANN201
     return excluded
 
 
+def _managed_by(cred: m.Credential, provider: m.SecretProvider, path: str) -> bool:
+    """Created (or linked) by this provider's import for this secret."""
+    meta = cred.meta or {}
+    return meta.get("imported_from") == provider.name and _norm(str(meta.get("external_path", ""))) == path
+
+
+async def _used_by(db: AsyncSession, cred_id: uuid.UUID) -> tuple[int, int]:
+    """(connections, credentials) that reference the credential."""
+    conns = (await db.execute(select(func.count()).select_from(m.Connection)
+                              .where(m.Connection.credential_id == cred_id))).scalar_one()
+    children = (await db.execute(select(func.count()).select_from(m.Credential)
+                                 .where(m.Credential.parent_id == cred_id))).scalar_one()
+    return conns, children
+
+
 async def _drop_excluded(db: AsyncSession, provider: m.SecretProvider, path: str,
                          mappings: list[m.SecretMapping], stats: dict[str, int]) -> None:
     """An excluded secret: remove its mappings; delete the credential the import created for it if unused."""
@@ -147,12 +169,8 @@ async def _drop_excluded(db: AsyncSession, provider: m.SecretProvider, path: str
         cred = await db.get(m.Credential, cred_id)
         if cred is None:
             continue
-        meta = cred.meta or {}
-        created_here = meta.get("imported_from") == provider.name and _norm(str(meta.get("external_path", ""))) == path
-        in_use = (await db.execute(select(func.count()).select_from(m.Connection)
-                                   .where(m.Connection.credential_id == cred_id))).scalar_one() \
-            or (await db.execute(select(func.count()).select_from(m.Credential)
-                                 .where(m.Credential.parent_id == cred_id))).scalar_one() \
+        created_here = _managed_by(cred, provider, path)
+        in_use = any(await _used_by(db, cred_id)) \
             or (await db.execute(select(func.count()).select_from(m.SecretMapping)
                                  .where(m.SecretMapping.credential_id == cred_id))).scalar_one()
         if created_here and not in_use:
@@ -161,6 +179,41 @@ async def _drop_excluded(db: AsyncSession, provider: m.SecretProvider, path: str
         else:
             stats["unlinked"] = stats.get("unlinked", 0) + 1
     await db.flush()
+
+
+async def _drop_removed(db: AsyncSession, provider: m.SecretProvider, path: str,
+                        mappings: list[m.SecretMapping], stats: dict[str, int], actor_id: uuid.UUID | None) -> None:
+    """The secret at ``path`` is gone from the provider: delete the credential the import manages for
+    it, unless something still uses it (then its mappings stay and report ``remote_missing``)."""
+    linked = [mp for mp in mappings if _norm(str((mp.external_ref or {}).get("path", ""))) == path]
+    for cred_id in {mp.credential_id for mp in linked}:
+        cred = await db.get(m.Credential, cred_id)
+        if cred is None or not _managed_by(cred, provider, path):
+            continue  # mapped by hand: only the mapping status shows the secret is missing
+        conns, children = await _used_by(db, cred_id)
+        other_sources = (await db.execute(select(func.count()).select_from(m.SecretMapping).where(
+            m.SecretMapping.credential_id == cred_id,
+            m.SecretMapping.id.not_in([mp.id for mp in linked])))).scalar_one()
+        if conns or children or other_sources:
+            stats["kept_in_use"] = stats.get("kept_in_use", 0) + 1
+            log.info("secret_removed_credential_kept", provider=provider.name, path=path, credential_id=str(cred_id),
+                     connections=conns, credentials=children, other_mappings=other_sources)
+            continue
+        for mp in linked:
+            if mp.credential_id == cred_id:
+                await db.delete(mp)
+        await db.flush()
+        name = cred.name
+        await db.delete(cred)
+        await db.flush()
+        stats["deleted_gone"] = stats.get("deleted_gone", 0) + 1
+        await audit.record(db, "credential.delete", actor_id=actor_id, resource_type="credential", resource_id=cred_id,
+                           details={"name": name, "reason": "secret removed from the provider",
+                                    "provider": provider.name, "path": path})
+
+
+def _under(path: str, root: str) -> bool:
+    return not root or path == root or path.startswith(root + "/")
 
 
 def _norm(path: str) -> str:
@@ -187,6 +240,8 @@ async def _walk(client: SecretProviderClient, root: str) -> list[tuple[str, list
                 continue
             secret_path = _norm(item.path)
             keys = [i.key for i in await client.browse(secret_path) if i.key is not None and _norm(i.path) == secret_path]
+            if not keys and await client.is_deleted(secret_path):
+                continue  # still listed, but deleted (KV v2 keeps the metadata)
             found.append((secret_path, keys))
             if len(found) >= MAX_SECRETS:
                 log.warning("secret_discovery_limit", limit=MAX_SECRETS)
@@ -238,6 +293,9 @@ async def discover(db: AsyncSession, client: SecretProviderClient, provider: m.S
             match = next((c for c in existing if c.id not in linked_creds), None)
             if match is not None:
                 cred_id = match.id
+                # from now on the import manages it (also: deleted when the secret is removed)
+                match.meta = {**(match.meta or {}), "imported_from": provider.name, "external_path": path,
+                              "import_linked": True}
                 stats["linked"] += 1
             else:
                 rel = path[len(import_path):].strip("/") if import_path and path.startswith(import_path) else path
@@ -264,4 +322,12 @@ async def discover(db: AsyncSession, client: SecretProviderClient, provider: m.S
                                    external_ref={"path": path, "key": key}))
             stats["keys_added"] += 1
     await db.flush()
+
+    # secrets that are gone (below the import path): delete the credentials the import manages for them
+    if len(secrets) < MAX_SECRETS:
+        present = {path for path, _ in secrets}
+        for path in sorted(p for p in set(by_path) - present if _under(p, import_path)):
+            await _drop_removed(db, provider, path, list(mappings), stats, actor_id)
+    else:
+        log.warning("secret_discovery_incomplete_no_removal", provider=provider.name, limit=MAX_SECRETS)
     return stats

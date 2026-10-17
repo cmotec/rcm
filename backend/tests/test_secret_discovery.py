@@ -88,3 +88,14 @@ def test_excluded_secrets_match_path_or_name() -> None:
     assert not excluded("prod/web01") and not excluded("testing/web01") and not excluded("a comment")
     assert not exclusion_matcher(None)("anything") and not exclusion_matcher([])("anything")
     assert exclusion_matcher(["infra/*"])("infra/x")                     # list form (provider config)
+
+
+def test_walk_skips_soft_deleted_secrets() -> None:
+    class SoftDeleted(_FakeProvider):
+        tree = {**_FakeProvider.tree, "": [*_FakeProvider.tree[""], BrowseItem("old01", None, False)], "old01": []}
+
+        async def is_deleted(self, path: str) -> bool:
+            return path == "old01"
+
+    found = asyncio.run(_walk(SoftDeleted(), ""))  # type: ignore[arg-type]
+    assert sorted(p for p, _ in found) == ["db/pg01", "web01"]

@@ -221,7 +221,7 @@ async def sync_provider(db: AsyncSession, provider: m.SecretProvider, settings: 
             if credential_id is None and (provider.config or {}).get("auto_import"):
                 found = await discover(db, client, provider, actor_id=actor_id)
                 stats.update(found)
-                if found["created"] or found["linked"] or found["keys_added"]:
+                if found["created"] or found["linked"] or found["keys_added"] or found.get("deleted_gone"):
                     await audit.record(db, "secret_provider.auto_import", actor_id=actor_id, actor_name=actor_name,
                                        resource_type="secret_provider", resource_id=provider.id, details=found)
             mappings = (await db.execute(stmt)).scalars().all()

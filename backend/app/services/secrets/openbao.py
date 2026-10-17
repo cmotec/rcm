@@ -103,6 +103,17 @@ class OpenBaoClient(SecretProviderClient):
         value = data.get(ref.key)
         return None if value is None else str(value)
 
+    async def is_deleted(self, path: str) -> bool:
+        """KV v2 keeps a deleted secret's metadata, so it is still listed; its data reads as 404 or null.
+        Anything else (e.g. 403: no read permission) is not taken as deleted."""
+        resp = await self._request("GET", self._data_url(path), headers=await self._headers())
+        if resp.status_code == 404:
+            return True
+        if resp.status_code != 200:
+            return False
+        body = resp.json().get("data") or {}
+        return self.config.kv_version == 2 and body.get("data") is None  # type: ignore[attr-defined]
+
     async def browse(self, path: str) -> list[BrowseItem]:
         headers = await self._headers()
         resp = await self._request("LIST", self._list_url(path), headers=headers)

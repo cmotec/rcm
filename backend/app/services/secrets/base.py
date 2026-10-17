@@ -70,6 +70,10 @@ class SecretProviderClient(ABC):
     async def browse(self, path: str) -> list[BrowseItem]:
         """List secret names (never values) under a path."""
 
+    async def is_deleted(self, path: str) -> bool:
+        """True if a listed secret has no current data (e.g. KV v2 soft delete). Unknown → False."""
+        return False
+
     async def _request(self, method: str, url: str, **kwargs: Any) -> httpx.Response:
         try:
             return await self.http.request(method, url, **kwargs)

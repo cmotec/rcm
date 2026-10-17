@@ -171,3 +171,44 @@ def test_openbao_client_kv2_and_approle() -> None:
         await c.close()
 
     _run(go())
+
+
+class TreeProvider(MemoryProvider):
+    """REMOTE as a flat KV mount: the top level lists the secrets, a secret lists its keys."""
+
+    async def browse(self, path: str) -> list[BrowseItem]:
+        path = path.strip("/")
+        if not path:
+            return [BrowseItem(path=p, key=None, is_folder=False) for p in sorted({p for p, _ in REMOTE})]
+        return await super().browse(path)
+
+
+def test_removed_secrets_delete_their_imported_credentials(admin: UserClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(sync_mod.PROVIDERS, "openbao", TreeProvider)
+    REMOTE.clear()
+    REMOTE.update({("gone01", "username"): "root", ("gone01", "password"): "pw1",
+                   ("stays01", "password"): "pw2", ("used01", "password"): "pw3"})
+    provider = admin.post("/api/v1/secret-providers", json={
+        "name": "bao-removal", "type": "openbao", "config": {"url": "http://bao.invalid", "auto_import": True},
+        "secrets": {"token": "tok"},
+    }).json()
+
+    def creds() -> dict[str, dict]:
+        return {c["name"]: c for c in admin.get("/api/v1/credentials", params={"limit": 1000}).json()["items"]
+                if c["name"] in ("gone01", "stays01", "used01")}
+
+    r = admin.post(f"/api/v1/secret-providers/{provider['id']}/sync")
+    assert r.status_code == 200, r.text
+    assert set(creds()) == {"gone01", "stays01", "used01"}
+    conn = admin.post("/api/v1/connections", json={"name": "uses it", "protocol": "ssh", "hostname": "h",
+                                                   "auth_mode": "credential", "credential_id": creds()["used01"]["id"]})
+    assert conn.status_code == 201, conn.text
+
+    for key in [k for k in REMOTE if k[0] in ("gone01", "used01")]:
+        del REMOTE[key]
+    stats = admin.post(f"/api/v1/secret-providers/{provider['id']}/sync").json()["stats"]
+    assert stats["deleted_gone"] == 1 and stats["kept_in_use"] == 1
+    left = creds()
+    assert set(left) == {"stays01", "used01"}
+    # still used by a connection: kept, and its mapping says the secret is missing
+    assert _mapping(admin, left["used01"]["id"])["status"] == "remote_missing"
