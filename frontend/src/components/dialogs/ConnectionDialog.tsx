@@ -7,6 +7,7 @@ import { dialogs } from '../../state/dialogs';
 import { PROTOCOL_LABELS } from '../common/icons';
 import { Modal } from '../common/Modal';
 import { SearchSelect } from '../common/SearchSelect';
+import { ACCOUNT_CHOICE_OPTIONS, credentialChoiceFields, credentialChoiceValue, isAccountChoice } from './credentialChoice';
 import { type FieldSpec, PROTOCOL_FIELDS, cleanSettings, defaultPort } from './protocolFields';
 
 interface Props {
@@ -90,7 +91,7 @@ export function ConnectionDialog({ connection, placement, onClose }: Props) {
   const [username, setUsername] = useState(lk.username ?? connection?.username ?? '');
   const [domain, setDomain] = useState(lk.domain ?? connection?.domain ?? '');
   const [password, setPassword] = useState<string | null>(lk.password ?? null); // null = unchanged
-  const [credentialId, setCredentialId] = useState(connection?.credential_id ?? '');
+  const [credentialId, setCredentialId] = useState(credentialChoiceValue(connection?.credential_id, connection?.personal_account));
   const [credentialFolderId, setCredentialFolderId] = useState(connection?.credential_folder_id ?? '');
   const [settings, setSettings] = useState<Record<string, unknown>>(() => {
     const s = { ...(connection?.settings ?? {}) };
@@ -212,7 +213,7 @@ export function ConnectionDialog({ connection, placement, onClose }: Props) {
       else body.password = password || null;
     }
     if (authMode === 'credential') {
-      body.credential_id = credentialId || null;
+      Object.assign(body, credentialChoiceFields(credentialId));
       body.credential_folder_id = credentialId ? null : credentialFolderId || null;
     }
     body.lookups = lookups;
@@ -373,11 +374,12 @@ export function ConnectionDialog({ connection, placement, onClose }: Props) {
           {authMode === 'credential' && (
             <label className="field"><span>Credential entry</span>
               <small className="muted">
-                {credentialId ? 'Pinned: the connection always starts with this credential.'
-                  : 'Not pinned: when connecting, users pick from the credentials they are allowed to use.'}
+                {isAccountChoice(credentialId) ? 'The connecting user’s own account (Profile → My accounts).'
+                  : credentialId ? 'Pinned: the connection always starts with this credential.'
+                  : 'Not pinned: when connecting, users pick from their accounts and the credentials they are allowed to use.'}
               </small>
               <SearchSelect value={credentialId} onChange={setCredentialId} emptyLabel="Let the user choose when connecting"
-                            placeholder="Search credentials…" options={credentialOptions} />
+                            placeholder="Search credentials…" options={[...ACCOUNT_CHOICE_OPTIONS, ...credentialOptions]} />
             </label>
           )}
           {authMode === 'credential' && !credentialId && (

@@ -50,6 +50,9 @@ PRINCIPAL_TYPES = ("user", "group", "role")
 SECRET_FIELDS = ("username", "password", "domain", "private_key", "passphrase")
 #: A user's own logins, kept in their profile (see PersonalAccount).
 PERSONAL_ACCOUNT_KINDS = ("user", "privileged")
+#: auth_mode "credential" with the connecting user's own account: "any" (the user picks one of their
+#: accounts), "user" or "privileged" (that one, without asking)
+PERSONAL_ACCOUNT_CHOICES = ("any", "user", "privileged")
 #: Secret mappings may also fill a credential attribute: field "attr:<name>" (e.g. attr:port),
 #: or a secret attribute: "secret:<name>" (write-only, like a password).
 ATTRIBUTE_FIELD_PREFIX = "attr:"
@@ -230,6 +233,8 @@ class Folder(TimestampMixin, Base):
     credential_folder_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("credential_folders.id", ondelete="SET NULL")
     )
+    # auth_mode "credential": the connecting user's own account instead of a credential-store entry
+    personal_account: Mapped[str | None] = mapped_column(String(16))
 
 
 class Connection(TimestampMixin, Base):
@@ -271,6 +276,8 @@ class Connection(TimestampMixin, Base):
     credential_folder_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("credential_folders.id", ondelete="SET NULL")
     )
+    # auth_mode "credential": the connecting user's own account instead of a credential-store entry
+    personal_account: Mapped[str | None] = mapped_column(String(16))
     settings: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, server_default="{}")
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
     owner_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))

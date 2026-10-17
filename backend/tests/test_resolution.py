@@ -208,3 +208,28 @@ def test_folder_prompt_only_when_the_connection_has_no_secret() -> None:
     own = with_password(conn("own", auth_mode="direct", username="root"), "own-pw")
     e = eff([own], folders=[ask])
     assert not e.prompt_required and e.value("password") == "own-pw"
+
+
+# --------------------------------------------------------------------------- the user's own account
+
+
+def test_personal_account_on_connection_and_folder() -> None:
+    from app.services.resolution import credential_matches, match_terms
+
+    c = conn("srv", auth_mode="credential", personal_account="privileged")
+    e = eff([c])
+    assert e.personal_account == "privileged" and not e.credential_choice_required and "password" not in e.auth
+    # "any": the user picks one of their accounts (not a credential-store choice)
+    assert eff([conn("srv", auth_mode="credential", personal_account="any")]).personal_account == "any"
+    # from a folder, only when the connection has no secret of its own
+    f = folder("Own", auth_mode="credential", personal_account="user")
+    assert eff([conn("in")], folders=[f]).personal_account == "user"
+    own = with_password(conn("own", auth_mode="direct", username="root"), "pw")
+    assert eff([own], folders=[f]).personal_account is None
+
+    host = conn("h", "rdp", hostname="atplct0005.corp.local", description="Print server")
+    terms = match_terms(eff([host]))
+    assert set(terms) == {"atplct0005.corp.local", "atplct0005", "print server"}
+    assert credential_matches(cred("atplct0005-root"), terms)
+    assert not credential_matches(cred("other"), terms)
+    assert match_terms(eff([conn("ip", "rdp", hostname="10.0.0.5")])) == ["10.0.0.5"]

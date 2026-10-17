@@ -2,7 +2,7 @@ import { ShieldAlert, TriangleAlert } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { folderPath, folderSubtree, useCredentialFolders, useCredentials, useEffective, usePersonalAccounts } from '../../api/hooks';
 import type { Credential, PersonalAccount, PersonalAccountKind, Protocol } from '../../api/types';
-import { type DialogRequest, type InteractiveCredentials, useDialogStore } from '../../state/dialogs';
+import { type AuthOverride, type DialogRequest, type InteractiveCredentials, useDialogStore } from '../../state/dialogs';
 import { Modal } from './Modal';
 
 function ConfirmDialog({ req }: { req: Extract<DialogRequest, { kind: 'confirm' }> }) {
@@ -169,30 +169,8 @@ function useConfiguredAccounts(): PersonalAccount[] {
   return (data ?? []).filter((a) => a.username || a.domain || a.has_password);
 }
 
-/** "My accounts": the user's own user / privileged login from their profile. */
-function AccountChoice({ accounts, loading, selected, onSelect, onPick }: {
-  accounts: PersonalAccount[]; loading: boolean; selected: PersonalAccountKind | null;
-  onSelect: (k: PersonalAccountKind) => void; onPick: (k: PersonalAccountKind) => void;
-}) {
-  if (loading) return <p className="muted">Loading…</p>;
-  if (!accounts.length) {
-    return <p className="banner warn">You have not stored your accounts yet. Add them under Profile → My accounts.</p>;
-  }
-  return (
-    <ul className="choice-list" role="listbox">
-      {accounts.map((a) => (
-        <li key={a.kind} role="option" aria-selected={selected === a.kind} className={selected === a.kind ? 'active' : ''}
-            onClick={() => onSelect(a.kind)} onDoubleClick={() => onPick(a.kind)}>
-          <b>{ACCOUNT_LABELS[a.kind]}</b>
-          <span className="muted">{accountLogin(a)}{a.has_password ? '' : ' (no password)'}</span>
-        </li>
-      ))}
-    </ul>
-  );
-}
-
 /** The connection's host name (full and short) and description, lower case: credentials whose name or
- * description contain one of them are suggested first (e.g. host atplct0005 → credential atplct0005-root). */
+ * description contain one of them are listed as matching (e.g. host atplct0005 → credential atplct0005-root). */
 function useMatchTerms(connectionId: string): string[] {
   const { data } = useEffective(connectionId);
   const host = typeof data?.hostname?.value === 'string' ? data.hostname.value.trim().toLowerCase() : '';
@@ -206,63 +184,101 @@ function useMatchTerms(connectionId: string): string[] {
   return [...terms].filter((t) => t.length >= 3);
 }
 
-/** Credentials to choose from: the ones matching the connection in their own list on top, then the rest. */
-function CredentialChoiceList({ items, terms, selected, onSelect, onPick }: {
-  items: Credential[]; terms: string[]; selected: string | null;
-  onSelect: (id: string) => void; onPick: (id: string) => void;
-}) {
-  const matches = (c: Credential) => {
-    const text = `${c.name} ${c.description ?? ''}`.toLowerCase();
-    return terms.some((t) => text.includes(t));
+const credentialMatches = (c: Credential, terms: string[]) =>
+  terms.some((t) => `${c.name} ${c.description ?? ''}`.toLowerCase().includes(t));
+
+/** A choice in the login list: "account:user" / "account:privileged" or "credential:<id>". */
+type LoginKey = string;
+
+function loginOverride(key: LoginKey): AuthOverride {
+  const [type, value] = key.split(':');
+  return type === 'account' ? { mode: 'account', account: value as PersonalAccountKind } : { mode: 'credential', credential_id: value };
+}
+
+/**
+ * One list, three sections: the user's own accounts, the credential store (the connection's credential
+ * folder, if it has one) and the credentials matching the connection's host (from every folder the user
+ * may use). Only credentials the user may connect with are listed.
+ */
+function useLoginChoices(connectionId: string, folderId: string | null, accountsOnly: boolean, filter: string) {
+  const { data, isLoading } = useCredentials();
+  const { data: folders } = useCredentialFolders();
+  const { isLoading: accountsLoading } = usePersonalAccounts();
+  const accounts = useConfiguredAccounts();
+  const terms = useMatchTerms(connectionId);
+  const q = filter.trim().toLowerCase();
+  const hit = (text: string) => !q || text.toLowerCase().includes(q);
+  const usable = accountsOnly ? [] : (data?.items ?? []).filter((c) => ['connect', 'edit', 'manage'].includes(c.permission ?? ''));
+  const allowedFolders = folderId ? folderSubtree(folders ?? [], folderId) : null;
+  const matching = usable.filter((c) => credentialMatches(c, terms));
+  const matchingIds = new Set(matching.map((c) => c.id));
+  const store = usable.filter((c) => !matchingIds.has(c.id))
+    .filter((c) => !allowedFolders || Boolean(c.folder_id && allowedFolders.has(c.folder_id)));
+  const credText = (c: Credential) => `${c.name} ${c.username ?? ''} ${c.domain ?? ''}`;
+  return {
+    loading: isLoading || accountsLoading,
+    total: accounts.length + store.length + matching.length,
+    accounts: accounts.filter((a) => hit(`${ACCOUNT_LABELS[a.kind]} ${accountLogin(a)}`)),
+    store: store.filter((c) => hit(credText(c))),
+    matching: matching.filter((c) => hit(credText(c))),
+    folderLabel: folderId ? folderPath(folders ?? [], folderId) || 'its folder' : null,
   };
-  const matching = items.filter(matches);
-  const others = items.filter((c) => !matches(c));
-  const list = (rows: Credential[]) => (
-    <ul className="choice-list" role="listbox">
-      {rows.map((c) => (
-        <li key={c.id} role="option" aria-selected={selected === c.id} className={selected === c.id ? 'active' : ''}
-            onClick={() => onSelect(c.id)} onDoubleClick={() => onPick(c.id)}>
-          <b>{c.name}</b>
-          <span className="muted">{c.domain ? `${c.domain}\\` : ''}{c.username ?? ''}</span>
-        </li>
-      ))}
-    </ul>
+}
+
+function LoginChoiceList({ choices, selected, onSelect, onPick }: {
+  choices: ReturnType<typeof useLoginChoices>; selected: LoginKey | null;
+  onSelect: (k: LoginKey) => void; onPick: (k: LoginKey) => void;
+}) {
+  const row = (key: LoginKey, title: string, detail: string) => (
+    <li key={key} role="option" aria-selected={selected === key} className={selected === key ? 'active' : ''}
+        onClick={() => onSelect(key)} onDoubleClick={() => onPick(key)}>
+      <b>{title}</b><span className="muted">{detail}</span>
+    </li>
   );
-  if (!matching.length) return list(others);
+  const credRow = (c: Credential) => row(`credential:${c.id}`, c.name, `${c.domain ? `${c.domain}\\` : ''}${c.username ?? ''}`);
   return (
     <>
-      <div className="choice-heading">Matching this connection</div>
-      {list(matching)}
-      {others.length > 0 && <><div className="choice-heading">Other credentials</div>{list(others)}</>}
+      {choices.accounts.length > 0 && (
+        <>
+          <div className="choice-heading">My accounts</div>
+          <ul className="choice-list" role="listbox">
+            {choices.accounts.map((a) => row(`account:${a.kind}`, ACCOUNT_LABELS[a.kind],
+              `${accountLogin(a)}${a.has_password ? '' : ' (no password)'}`))}
+          </ul>
+        </>
+      )}
+      {choices.store.length > 0 && (
+        <>
+          <div className="choice-heading">Credential store{choices.folderLabel ? ` — ${choices.folderLabel}` : ''}</div>
+          <ul className="choice-list" role="listbox">{choices.store.map(credRow)}</ul>
+        </>
+      )}
+      {choices.matching.length > 0 && (
+        <>
+          <div className="choice-heading">Matching this connection</div>
+          <ul className="choice-list" role="listbox">{choices.matching.map(credRow)}</ul>
+        </>
+      )}
     </>
   );
 }
 
 function ChooseCredentialDialog({ req }: { req: Extract<DialogRequest, { kind: 'choose-credential' }> }) {
-  const { data, isLoading } = useCredentials();
-  const { data: folders } = useCredentialFolders();
   const [filter, setFilter] = useState('');
-  // only credentials the user may use (connect or higher), from the connection's folder if it has one
-  const allowedFolders = req.folderId ? folderSubtree(folders ?? [], req.folderId) : null;
-  const usable = (data?.items ?? []).filter((c) => ['connect', 'edit', 'manage'].includes(c.permission ?? ''))
-    .filter((c) => !allowedFolders || Boolean(c.folder_id && allowedFolders.has(c.folder_id)));
-  const shown = usable.filter((c) => !filter || `${c.name} ${c.username ?? ''} ${c.domain ?? ''}`.toLowerCase().includes(filter.toLowerCase()));
-  const terms = useMatchTerms(req.connectionId);
-  const [selected, setSelected] = useState<string | null>(null);
-  const [tab, setTab] = useState<'store' | 'account' | 'own' | null>(null);
+  const accountsOnly = Boolean(req.accountsOnly);
+  const choices = useLoginChoices(req.connectionId, req.folderId ?? null, accountsOnly, filter);
+  const [picked, setPicked] = useState<LoginKey | null>(null);
+  const only = choices.total === 1 ? (choices.accounts[0] ? `account:${choices.accounts[0].kind}`
+    : `credential:${(choices.store[0] ?? choices.matching[0])?.id}`) : null;
+  const selected = picked ?? only;
+  const [tab, setTab] = useState<'choose' | 'own' | null>(null);
   const [own, setOwn] = useState<InteractiveCredentials>({ username: '', password: '', domain: '' });
-  const { isLoading: accountsLoading } = usePersonalAccounts();
-  const accounts = useConfiguredAccounts();
-  const [account, setAccount] = useState<PersonalAccountKind | null>(null);
-  const chosenAccount = account ?? (accounts.length === 1 ? accounts[0].kind : null);
-  // nothing in the store to choose from: start on "My accounts", or on "Enter credentials"
-  const active = tab ?? (isLoading || usable.length ? 'store' : accountsLoading || accounts.length ? 'account' : 'own');
-  const valid = active === 'store' ? Boolean(selected)
-    : active === 'account' ? Boolean(chosenAccount) : Boolean(own.username || own.password);
+  // nothing to choose from: start on "Enter credentials"
+  const active = accountsOnly ? 'choose' : tab ?? (choices.loading || choices.total ? 'choose' : 'own');
+  const valid = active === 'choose' ? Boolean(selected) : Boolean(own.username || own.password);
   const submit = () => {
     if (!valid) return;
-    if (active === 'store') req.resolve({ mode: 'credential', credential_id: selected! });
-    else if (active === 'account') req.resolve({ mode: 'account', account: chosenAccount! });
+    if (active === 'choose') req.resolve(loginOverride(selected!));
     else req.resolve({ mode: 'own', credentials: typedCredentials(own) });
   };
   return (
@@ -271,31 +287,26 @@ function ChooseCredentialDialog({ req }: { req: Extract<DialogRequest, { kind: '
              <button onClick={() => req.resolve(null)}>Cancel</button>
              <button className="primary" disabled={!valid} onClick={submit}>Connect</button>
            </>}>
-      <div className="tabs-inline" role="tablist">
-        <button role="tab" aria-selected={active === 'store'} className={active === 'store' ? 'active' : ''}
-                onClick={() => setTab('store')}>Credential store</button>
-        <button role="tab" aria-selected={active === 'account'} className={active === 'account' ? 'active' : ''}
-                onClick={() => setTab('account')}>My accounts</button>
-        <button role="tab" aria-selected={active === 'own'} className={active === 'own' ? 'active' : ''}
-                onClick={() => setTab('own')}>Enter credentials</button>
-      </div>
-      {active === 'account' ? (
+      {!accountsOnly && (
+        <div className="tabs-inline" role="tablist">
+          <button role="tab" aria-selected={active === 'choose'} className={active === 'choose' ? 'active' : ''}
+                  onClick={() => setTab('choose')}>Accounts &amp; credentials</button>
+          <button role="tab" aria-selected={active === 'own'} className={active === 'own' ? 'active' : ''}
+                  onClick={() => setTab('own')}>Enter credentials</button>
+        </div>
+      )}
+      {active === 'choose' ? (
         <>
-          <p className="muted">Sign in with one of your own accounts from your profile.</p>
-          <AccountChoice accounts={accounts} loading={accountsLoading} selected={chosenAccount} onSelect={setAccount}
-                         onPick={(k) => req.resolve({ mode: 'account', account: k })} />
-        </>
-      ) : active === 'store' ? (
-        <>
-          <p className="muted">Choose the credential to use for this session
-            {req.folderId ? <> (from <b>{folderPath(folders ?? [], req.folderId) || 'its folder'}</b>)</> : null}.</p>
-          {usable.length > 6 && (
-            <input placeholder="Filter…" value={filter} onChange={(e) => setFilter(e.target.value)} autoFocus />
+          <p className="muted">{accountsOnly ? 'This connection signs in with one of your own accounts.'
+            : 'Choose the login for this session.'}</p>
+          {choices.total > 6 && <input placeholder="Filter…" value={filter} onChange={(e) => setFilter(e.target.value)} autoFocus />}
+          {choices.loading && <p className="muted">Loading…</p>}
+          {!choices.loading && !choices.total && (
+            <p className="banner warn">{accountsOnly ? 'You have not stored your accounts yet. Add them under Profile → My accounts.'
+              : 'You have no accounts or credentials you are allowed to use.'}</p>
           )}
-          {isLoading && <p className="muted">Loading…</p>}
-          {!isLoading && !usable.length && <p className="banner warn">You have no credentials you are allowed to use.</p>}
-          <CredentialChoiceList items={shown} terms={terms} selected={selected} onSelect={setSelected}
-                                onPick={(id) => req.resolve({ mode: 'credential', credential_id: id })} />
+          <LoginChoiceList choices={choices} selected={selected} onSelect={setPicked}
+                           onPick={(k) => req.resolve(loginOverride(k))} />
         </>
       ) : (
         <>
@@ -308,29 +319,16 @@ function ChooseCredentialDialog({ req }: { req: Extract<DialogRequest, { kind: '
 }
 
 function OpenWithDialog({ req }: { req: Extract<DialogRequest, { kind: 'open-with' }> }) {
-  const { data } = useCredentials();
-  const usable = (data?.items ?? []).filter((c) => ['connect', 'edit', 'manage'].includes(c.permission ?? ''));
-  const terms = useMatchTerms(req.connectionId);
-  const [mode, setMode] = useState<'own' | 'account' | 'credential'>('own');
+  const [filter, setFilter] = useState('');
+  const choices = useLoginChoices(req.connectionId, null, false, filter);
+  const [mode, setMode] = useState<'choose' | 'own'>('choose');
   const [v, setV] = useState<InteractiveCredentials>({ username: '', password: '', domain: '' });
-  const [credId, setCredId] = useState<string | null>(null);
-  const { isLoading: accountsLoading } = usePersonalAccounts();
-  const accounts = useConfiguredAccounts();
-  const [account, setAccount] = useState<PersonalAccountKind | null>(null);
-  const chosenAccount = account ?? (accounts.length === 1 ? accounts[0].kind : null);
-  const valid = mode === 'own' ? Boolean(v.username || v.password)
-    : mode === 'account' ? Boolean(chosenAccount) : Boolean(credId);
+  const [picked, setPicked] = useState<LoginKey | null>(null);
+  const valid = mode === 'own' ? Boolean(v.username || v.password) : Boolean(picked);
   const submit = () => {
     if (!valid) return;
-    if (mode === 'credential') {
-      req.resolve({ mode: 'credential', credential_id: credId! });
-      return;
-    }
-    if (mode === 'account') {
-      req.resolve({ mode: 'account', account: chosenAccount! });
-      return;
-    }
-    req.resolve({ mode: 'own', credentials: typedCredentials(v) });
+    if (mode === 'choose') req.resolve(loginOverride(picked!));
+    else req.resolve({ mode: 'own', credentials: typedCredentials(v) });
   };
   return (
     <Modal title={`Open ${req.connectionName} with different credentials`} onClose={() => req.resolve(null)} width={480}
@@ -339,14 +337,10 @@ function OpenWithDialog({ req }: { req: Extract<DialogRequest, { kind: 'open-wit
              <button className="primary" disabled={!valid} onClick={submit}>Connect</button>
            </>}>
       <p className="muted">Used for this session only, instead of the connection's configured login.</p>
-      <div className="radio-cards three">
-        <label className={`radio-card ${mode === 'credential' ? 'active' : ''}`}>
-          <input type="radio" name="open-with" checked={mode === 'credential'} onChange={() => setMode('credential')} />
-          <b>Credential store</b><small>Any entry you are allowed to use.</small>
-        </label>
-        <label className={`radio-card ${mode === 'account' ? 'active' : ''}`}>
-          <input type="radio" name="open-with" checked={mode === 'account'} onChange={() => setMode('account')} />
-          <b>My accounts</b><small>Your user or privileged account.</small>
+      <div className="radio-cards two">
+        <label className={`radio-card ${mode === 'choose' ? 'active' : ''}`}>
+          <input type="radio" name="open-with" checked={mode === 'choose'} onChange={() => setMode('choose')} />
+          <b>Accounts &amp; credentials</b><small>Your accounts or a credential you may use.</small>
         </label>
         <label className={`radio-card ${mode === 'own' ? 'active' : ''}`}>
           <input type="radio" name="open-with" checked={mode === 'own'} onChange={() => setMode('own')} />
@@ -355,14 +349,12 @@ function OpenWithDialog({ req }: { req: Extract<DialogRequest, { kind: 'open-wit
       </div>
       {mode === 'own' ? (
         <OwnCredentialsForm protocol={req.protocol} value={v} onChange={setV} onSubmit={submit} />
-      ) : mode === 'account' ? (
-        <AccountChoice accounts={accounts} loading={accountsLoading} selected={chosenAccount} onSelect={setAccount}
-                       onPick={(k) => req.resolve({ mode: 'account', account: k })} />
       ) : (
         <>
-          {!usable.length && <p className="banner warn">You have no credentials you are allowed to use.</p>}
-          <CredentialChoiceList items={usable} terms={terms} selected={credId} onSelect={setCredId}
-                                onPick={(id) => req.resolve({ mode: 'credential', credential_id: id })} />
+          {choices.total > 6 && <input placeholder="Filter…" value={filter} onChange={(e) => setFilter(e.target.value)} autoFocus />}
+          {!choices.loading && !choices.total && <p className="banner warn">You have no accounts or credentials you are allowed to use.</p>}
+          <LoginChoiceList choices={choices} selected={picked} onSelect={setPicked}
+                           onPick={(k) => req.resolve(loginOverride(k))} />
         </>
       )}
     </Modal>

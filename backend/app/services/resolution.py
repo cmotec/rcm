@@ -17,6 +17,7 @@ The rules are documented in docs/architecture.md, section 5. Summary:
 
 from __future__ import annotations
 
+import re
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -109,6 +110,9 @@ class EffectiveConnection:
     description: Resolved | None = None
     # field -> why its lookup failed (only lookups that decide an effective value)
     lookup_errors: dict[str, str] = field(default_factory=dict)
+    # auth_mode "credential" with the connecting user's own account: "any" (the user picks one of their
+    # accounts), "user" or "privileged" (filled in at launch, see api/v1/sessions.py)
+    personal_account: str | None = None
 
     @property
     def credential_choice_required(self) -> bool:
@@ -151,6 +155,7 @@ class EffectiveConnection:
             "credential_choice_folder_id": (
                 str(self.credential_choice_folder_id) if self.credential_choice_folder_id else None
             ),
+            "personal_account": self.personal_account,
             "description": self.description.public() if self.description else None,
             "lookup_errors": dict(self.lookup_errors),
             "interactive_connection_id": (
@@ -347,6 +352,26 @@ def _folder_own(f: m.Folder, credentials: dict[uuid.UUID, list[m.Credential]], b
         if cred_id:
             vals.update(credential_values(credentials.get(cred_id, []), box, include_secrets=include_secrets))
     return vals
+
+
+def match_terms(eff: EffectiveConnection) -> list[str]:
+    """Lower-case terms a credential's name or description must contain to "match" the connection:
+    its host name (full and, unless an IP address, the short name) and the first line of its description."""
+    terms: set[str] = set()
+    host = str(eff.hostname.value).strip().lower() if eff.hostname and eff.hostname.value else ""
+    if host:
+        terms.add(host)
+        if not re.fullmatch(r"[\d.]+", host) and ":" not in host:
+            terms.add(host.split(".")[0])
+    desc = eff.description.value if eff.description and isinstance(eff.description.value, str) else ""
+    if desc.strip():
+        terms.add(desc.splitlines()[0].strip().lower())
+    return [t for t in terms if len(t) >= 3]
+
+
+def credential_matches(cred: m.Credential, terms: list[str]) -> bool:
+    text = f"{cred.name} {cred.description or ''}".lower()
+    return any(t in text for t in terms)
 
 
 # --------------------------------------------------------------------------- main entry
@@ -597,8 +622,13 @@ def compute_effective(
     auth_errors: dict[str, str] = {}
     interactive = {k: v for k, v in (interactive or {}).items() if k in AUTH_FIELDS and v}
     reached_top = True  # the whole chain inherits: the folder's authentication can fill in
+    personal: str | None = None
     for idx, c in enumerate(chain):
-        choose_here = c.auth_mode == "credential" and not c.credential_id and choice_conn is None
+        if c.auth_mode == "credential" and getattr(c, "personal_account", None) and personal is None \
+                and choice_conn is None:
+            personal = c.personal_account  # the user's own account, filled in at launch
+        choose_here = (c.auth_mode == "credential" and not c.credential_id and not getattr(c, "personal_account", None)
+                       and choice_conn is None and personal is None)
         if choose_here:
             choice_conn = c.id
             choice_folder = c.credential_folder_id
@@ -624,7 +654,11 @@ def compute_effective(
     if f is not None:
         has_secret = any(k in auth for k in ("password", "private_key"))
         asks = f.auth_mode == "interactive" or (f.auth_mode == "credential" and not f.credential_id)
-        if not asks or (not has_secret and interactive_conn is None and choice_conn is None):
+        own_account = f.auth_mode == "credential" and getattr(f, "personal_account", None)
+        if own_account:  # the user's own account: like asking, only when nothing supplied a secret
+            if not has_secret and interactive_conn is None and choice_conn is None and personal is None:
+                personal = f.personal_account
+        elif not asks or (not has_secret and interactive_conn is None and choice_conn is None and personal is None):
             choose_here = f.auth_mode == "credential" and not f.credential_id
             if choose_here:
                 choice_conn = conn.id
@@ -650,6 +684,7 @@ def compute_effective(
             auth = {k: Resolved(v, src) for k, v in (auth_override.values or {}).items() if k in AUTH_FIELDS and v}
         interactive_conn = None
         choice_conn = None
+        personal = None
         auth_errors = {}
     # a failed auth lookup matters only if nothing else supplied the field
     errors.update({k: v for k, v in auth_errors.items() if k not in auth})
@@ -668,4 +703,5 @@ def compute_effective(
         credential_choice_folder_id=choice_folder if choice_conn else None,
         description=description,
         lookup_errors=errors,
+        personal_account=personal,
     )

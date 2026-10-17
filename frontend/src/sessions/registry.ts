@@ -102,11 +102,12 @@ async function startSession(conn: ConnectionRef, target: OpenTarget, loading: Co
       });
     } catch (err) {
       if (err instanceof ApiError && err.code === 'credential_choice_required') {
-        const folderId = (err.problem as { folder_id?: string | null }).folder_id ?? null;
-        const chosen = await ask(loading, () => dialogs.chooseCredential(conn.id, conn.name, conn.protocol, folderId));
+        const problem = err.problem as { folder_id?: string | null; accounts_only?: boolean };
+        const chosen = await ask(loading, () => dialogs.chooseCredential(conn.id, conn.name, conn.protocol,
+          problem.folder_id ?? null, Boolean(problem.accounts_only)));
         if (!chosen) return null;
         if (chosen.mode === 'credential') credentialId = chosen.credential_id;
-        else authOverride = chosen; // typed by the user, this session only
+        else authOverride = chosen; // one of the user's accounts, or typed: this session only
         continue;
       }
       if (err instanceof ApiError && err.code === 'credentials_required') {

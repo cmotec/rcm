@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, Query, Request, WebSocket
 from fastapi.responses import StreamingResponse
 
 from app.api.deps import Principal, authenticate, authenticate_websocket, settings_dep
+from app import models as m
 from app.config import Settings, get_settings
 from app.db import session_scope
 from app.errors import AppError, Conflict, Forbidden, NotFound, TooManyRequests, ValidationFailed
@@ -30,7 +31,7 @@ from app.security.ratelimit import limiter
 from app.services import audit, personal_accounts
 from app.services.app_settings import get_runtime
 from app.services.authz import Perm
-from app.services.resolution import AuthOverride, EffectiveConnection, Source
+from app.services.resolution import AuthOverride, EffectiveConnection, Source, credential_matches, match_terms
 from app.services.sessions import guacd_params
 from app.services.sessions.files.base import Transfer, clean_path
 from app.services.sessions.files.opener import open_fs
@@ -48,8 +49,21 @@ class CredentialsRequired(AppError):
     status, code, title = 428, "credentials_required", "Credentials required"
 
 
+class _UseAccount(Exception):  # noqa: N818 - control flow, never leaves create_session
+    """The connection logs in with the user's own account of this kind (filled in at launch)."""
+
+    def __init__(self, kind: str) -> None:
+        super().__init__(kind)
+        self.kind = kind
+
+
 def _ask_before_connecting(eff: EffectiveConnection) -> None:
     """Questions for the user, raised before DNS lookups and jump-host preparation."""
+    if eff.personal_account == "any":
+        raise CredentialChoiceRequired("choose one of your accounts to connect with",
+                                       extra={"folder_id": None, "accounts_only": True})
+    if eff.personal_account in ("user", "privileged"):
+        raise _UseAccount(eff.personal_account)
     if eff.credential_choice_required:
         folder = eff.credential_choice_folder_id
         raise CredentialChoiceRequired("choose the credential to connect with",
@@ -137,27 +151,41 @@ async def create_session(body: SessionCreate, request: Request, principal: Princ
 
     async with session_scope() as db:
         runtime = await get_runtime(db, settings)
-        if account_kind is not None:
-            acc = await personal_accounts.get_account(db, principal.id, account_kind)
+        async def account_override(kind: str) -> AuthOverride:
+            acc = await personal_accounts.get_account(db, principal.id, kind)
             values = personal_accounts.account_values(acc, get_box()) if acc else {}
             if not values:
-                raise ValidationFailed(
-                    f"{personal_accounts.LABELS[account_kind].capitalize()} is not set up (Profile → My accounts)")
-            override = AuthOverride(values=values, source=Source("account", str(acc.id),  # type: ignore[union-attr]
-                                                                 personal_accounts.LABELS[account_kind]))
+                raise ValidationFailed(f"{personal_accounts.LABELS[kind].capitalize()} is not set up (Profile → My accounts)")
+            return AuthOverride(values=values, source=Source("account", str(acc.id),  # type: ignore[union-attr]
+                                                             personal_accounts.LABELS[kind]))
+
+        if account_kind is not None:
+            override = await account_override(account_kind)
+        chosen = await db.get(m.Credential, body.credential_id) if body.credential_id else None
 
         def precheck(eff: EffectiveConnection) -> None:
             folder = eff.credential_choice_folder_id
-            if folder and eff.chosen_credential_id \
-                    and access.credential_folder_of(eff.chosen_credential_id) not in access.cred_folder_subtree(folder):
-                raise ValidationFailed("this connection only accepts credentials from its credential folder")
+            # outside the connection's credential folder only credentials that match the host are accepted
+            if folder and chosen is not None \
+                    and access.credential_folder_of(chosen.id) not in access.cred_folder_subtree(folder) \
+                    and not credential_matches(chosen, match_terms(eff)):
+                raise ValidationFailed("this connection only accepts credentials from its credential folder "
+                                       "or credentials that match its host")
             _ask_before_connecting(eff)
 
-        launch, eff = await build_launch(db, body.connection_id, settings=settings, runtime=runtime,
-                                         box=get_box(), interactive=interactive,
-                                         chosen_credential_id=body.credential_id, auth_override=override,
-                                         precheck=precheck,
-                                         credential_filter=lambda cid: access.can("credential", cid, "connect"))
+        def launch_with(auth: AuthOverride | None):  # noqa: ANN202
+            return build_launch(db, body.connection_id, settings=settings, runtime=runtime, box=get_box(),
+                                interactive=interactive, chosen_credential_id=body.credential_id,
+                                auth_override=auth, precheck=precheck,
+                                credential_filter=lambda cid: access.can("credential", cid, "connect"))
+
+        try:
+            launch, eff = await launch_with(override)
+        except _UseAccount as use:
+            # the connection logs in with the user's own account: resolve again with it
+            account_kind = use.kind
+            override = await account_override(use.kind)
+            launch, eff = await launch_with(override)
         if eff.credential_choice_required:
             raise CredentialChoiceRequired("choose the credential to connect with")
         if launch.protocol == "rdp" and not launch.settings.server_layout:
