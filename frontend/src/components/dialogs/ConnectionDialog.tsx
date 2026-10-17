@@ -6,6 +6,7 @@ import type { AuthMode, Connection, EffectiveConnection, LookupField, Protocol, 
 import { dialogs } from '../../state/dialogs';
 import { PROTOCOL_LABELS } from '../common/icons';
 import { Modal } from '../common/Modal';
+import { SearchSelect } from '../common/SearchSelect';
 import { type FieldSpec, PROTOCOL_FIELDS, cleanSettings, defaultPort } from './protocolFields';
 
 interface Props {
@@ -109,6 +110,13 @@ export function ConnectionDialog({ connection, placement, onClose }: Props) {
     if (connection) get<EffectiveConnection>(`/api/v1/connections/${connection.id}/effective`).then(setEffective).catch(() => undefined);
   }, [parentId, connection]);
 
+  const credentialOptions = useMemo(() => (creds?.items ?? [])
+    .filter((c) => ['connect', 'edit', 'manage'].includes(c.permission ?? ''))
+    .map((c) => ({ value: c.id, label: c.name, hint: c.username ? `${c.domain ? `${c.domain}\\` : ''}${c.username}` : undefined })),
+  [creds]);
+  const credentialFolderOptions = useMemo(() => (credFolders ?? [])
+    .map((f) => ({ value: f.id, label: folderPath(credFolders ?? [], f.id) }))
+    .sort((a, b) => a.label.localeCompare(b.label)), [credFolders]);
   const sshConnections = useMemo(() => (tree?.connections ?? []).filter((c) => c.protocol === 'ssh' && c.id !== connection?.id), [tree, connection]);
   const fields = PROTOCOL_FIELDS[protocol];
   const groups = useMemo(() => [...new Set(fields.map((f) => f.group))], [fields]);
@@ -152,10 +160,9 @@ export function ConnectionDialog({ connection, placement, onClose }: Props) {
       case 'tunnel': {
         const current = f.type === 'tunnel' ? (raw as { via_connection_id?: string } | undefined)?.via_connection_id ?? '' : String(raw ?? '');
         input = (
-          <select value={current} onChange={(e) => setField(f.key, f.type === 'tunnel' ? (e.target.value ? { via_connection_id: e.target.value } : null) : e.target.value)}>
-            <option value="">None</option>
-            {sshConnections.map((c) => <option key={c.id} value={c.id}>{c.name}{c.hostname ? ` (${c.hostname})` : ''}</option>)}
-          </select>
+          <SearchSelect value={current} emptyLabel="None" placeholder="Search SSH connections…"
+                        options={sshConnections.map((c) => ({ value: c.id, label: c.name, hint: c.hostname ?? undefined }))}
+                        onChange={(v) => setField(f.key, f.type === 'tunnel' ? (v ? { via_connection_id: v } : null) : v)} />
         );
         break;
       }
@@ -369,22 +376,15 @@ export function ConnectionDialog({ connection, placement, onClose }: Props) {
                 {credentialId ? 'Pinned: the connection always starts with this credential.'
                   : 'Not pinned: when connecting, users pick from the credentials they are allowed to use.'}
               </small>
-              <select value={credentialId} onChange={(e) => setCredentialId(e.target.value)}>
-                <option value="">Let the user choose when connecting</option>
-                {(creds?.items ?? []).filter((c) => ['connect', 'edit', 'manage'].includes(c.permission ?? '')).map((c) => (
-                  <option key={c.id} value={c.id}>{c.name}{c.username ? ` (${c.domain ? `${c.domain}\\` : ''}${c.username})` : ''}</option>
-                ))}
-              </select>
+              <SearchSelect value={credentialId} onChange={setCredentialId} emptyLabel="Let the user choose when connecting"
+                            placeholder="Search credentials…" options={credentialOptions} />
             </label>
           )}
           {authMode === 'credential' && !credentialId && (
             <label className="field"><span>Offer only credentials from this folder</span>
-              <select value={credentialFolderId} onChange={(e) => setCredentialFolderId(e.target.value)}>
-                <option value="">— all credentials the user may use —</option>
-                {[...(credFolders ?? [])]
-                  .sort((a, b) => folderPath(credFolders ?? [], a.id).localeCompare(folderPath(credFolders ?? [], b.id)))
-                  .map((f) => <option key={f.id} value={f.id}>{folderPath(credFolders ?? [], f.id)}</option>)}
-              </select>
+              <SearchSelect value={credentialFolderId} onChange={setCredentialFolderId}
+                            emptyLabel="— all credentials the user may use —" placeholder="Search folders…"
+                            options={credentialFolderOptions} />
               <small className="muted">Includes the folders below it.</small>
             </label>
           )}

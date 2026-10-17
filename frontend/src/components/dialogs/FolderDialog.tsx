@@ -1,10 +1,11 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { errorMessage, patch, post } from '../../api/client';
 import { folderPath, useCredentialFolders, useCredentials, useInvalidate } from '../../api/hooks';
 import type { AuthMode, Folder } from '../../api/types';
 import { dialogs } from '../../state/dialogs';
 import { FOLDER_COLORS, FOLDER_ICONS } from '../common/icons';
 import { Modal } from '../common/Modal';
+import { SearchSelect } from '../common/SearchSelect';
 
 const FOLDER_AUTH_MODES: { value: AuthMode; label: string; help: string }[] = [
   { value: 'inherit', label: 'Inherit', help: 'Use the authentication of the parent folder (if any).' },
@@ -30,6 +31,13 @@ export function FolderDialog({ folder, parentId, onClose }: { folder?: Folder; p
   const [credentialId, setCredentialId] = useState(folder?.credential_id ?? '');
   const [credentialFolderId, setCredentialFolderId] = useState(folder?.credential_folder_id ?? '');
   const [error, setError] = useState<string | null>(null);
+  const credentialOptions = useMemo(() => (creds?.items ?? [])
+    .filter((c) => ['connect', 'edit', 'manage'].includes(c.permission ?? ''))
+    .map((c) => ({ value: c.id, label: c.name, hint: c.username ? `${c.domain ? `${c.domain}\\` : ''}${c.username}` : undefined })),
+  [creds]);
+  const credentialFolderOptions = useMemo(() => (credFolders ?? [])
+    .map((f) => ({ value: f.id, label: folderPath(credFolders ?? [], f.id) }))
+    .sort((a, b) => a.label.localeCompare(b.label)), [credFolders]);
 
   const save = async () => {
     const body: Record<string, unknown> = {
@@ -131,12 +139,8 @@ export function FolderDialog({ folder, parentId, onClose }: { folder?: Folder; p
         )}
         {authMode === 'credential' && (
           <label className="field"><span>Credential entry</span>
-            <select value={credentialId} onChange={(e) => setCredentialId(e.target.value)}>
-              <option value="">Let the user choose when connecting</option>
-              {(creds?.items ?? []).filter((c) => ['connect', 'edit', 'manage'].includes(c.permission ?? '')).map((c) => (
-                <option key={c.id} value={c.id}>{c.name}{c.username ? ` (${c.domain ? `${c.domain}\\` : ''}${c.username})` : ''}</option>
-              ))}
-            </select>
+            <SearchSelect value={credentialId} onChange={setCredentialId} emptyLabel="Let the user choose when connecting"
+                          placeholder="Search credentials…" options={credentialOptions} />
             <small className="muted">
               {credentialId ? 'Pinned: connections in this folder start with this credential.'
                 : 'Not pinned: when connecting, users pick from the credentials they are allowed to use.'}
@@ -145,12 +149,9 @@ export function FolderDialog({ folder, parentId, onClose }: { folder?: Folder; p
         )}
         {authMode === 'credential' && !credentialId && (
           <label className="field"><span>Offer only credentials from this folder</span>
-            <select value={credentialFolderId} onChange={(e) => setCredentialFolderId(e.target.value)}>
-              <option value="">— all credentials the user may use —</option>
-              {[...(credFolders ?? [])]
-                .sort((a, b) => folderPath(credFolders ?? [], a.id).localeCompare(folderPath(credFolders ?? [], b.id)))
-                .map((f) => <option key={f.id} value={f.id}>{folderPath(credFolders ?? [], f.id)}</option>)}
-            </select>
+            <SearchSelect value={credentialFolderId} onChange={setCredentialFolderId}
+                          emptyLabel="— all credentials the user may use —" placeholder="Search folders…"
+                          options={credentialFolderOptions} />
             <small className="muted">Includes the folders below it.</small>
           </label>
         )}
