@@ -25,7 +25,7 @@ from app.config import Settings
 from app.db import session_scope
 from app.errors import AppError
 from app.logging import get_logger
-from app.services.sessions.manager import Session, SessionManager
+from app.services.sessions.manager import Session, SessionManager, Stopped, unless_stopped
 from app.services.sessions.ssh_native import SshConnectionSet, open_connection_set
 
 log = get_logger(__name__)
@@ -55,16 +55,23 @@ async def run_terminal(ws: WebSocket, session: Session, manager: SessionManager,
     shell_exited = False  # the remote shell ended: the session is over, not waiting for a reconnect
     try:
         await ws.send_text(json.dumps({"type": "status", "state": "connecting"}))
-        async with session_scope() as db:
-            conns = await open_connection_set(db, launch, settings)
-        s = launch.settings
-        process = await conns.conn.create_process(
-            s.command or None,
-            term_type=s.term_type or "xterm-256color",
-            term_size=(cols, rows),
-            encoding=None,
-            stderr=asyncssh.STDOUT,
-        )
+
+        async def open_shell() -> None:
+            nonlocal conns, process
+            async with session_scope() as db:
+                conns = await open_connection_set(db, launch, settings)
+            s = launch.settings
+            process = await conns.conn.create_process(
+                s.command or None,
+                term_type=s.term_type or "xterm-256color",
+                term_size=(cols, rows),
+                encoding=None,
+                stderr=asyncssh.STDOUT,
+            )
+
+        # closing the session (e.g. Cancel while the host does not answer) stops connecting at once
+        await unless_stopped(open_shell(), stop)
+        assert process is not None
         await manager.mark_connected(session)
         await ws.send_text(json.dumps({"type": "status", "state": "connected"}))
         remote_ended = await _relay(ws, process, session, stop)
@@ -82,7 +89,7 @@ async def run_terminal(ws: WebSocket, session: Session, manager: SessionManager,
     except asyncssh.ChannelOpenError as exc:
         error = f"cannot open shell: {exc.reason}"
         await _send_error(ws, "channel_open_failed", error)
-    except (WebSocketDisconnect, asyncio.CancelledError):
+    except (WebSocketDisconnect, asyncio.CancelledError, Stopped):
         pass
     except (OSError, asyncssh.Error) as exc:
         error = f"connection lost: {exc}"

@@ -212,3 +212,36 @@ def test_unloadable_private_key_falls_back_to_the_password() -> None:
     # ... and without a password it is an error
     with pytest.raises(ValidationFailed):
         _client_keys(launch(encrypted, None, "wrong"))
+
+
+# --------------------------------------------------------------------------- cancelling a session while it connects
+
+
+def test_unless_stopped_gives_up_when_the_session_is_closed() -> None:
+    import asyncio
+
+    from app.services.sessions.manager import Stopped, unless_stopped
+
+    async def run() -> None:
+        stop = asyncio.Event()
+        cancelled = asyncio.Event()
+
+        async def slow_connect() -> str:
+            try:
+                await asyncio.sleep(30)  # a host that does not answer
+            except asyncio.CancelledError:
+                cancelled.set()
+                raise
+            return "connected"
+
+        asyncio.get_running_loop().call_later(0.05, stop.set)
+        with pytest.raises(Stopped):
+            await asyncio.wait_for(unless_stopped(slow_connect(), stop), 2)
+        assert cancelled.is_set()
+
+        async def quick() -> str:
+            return "connected"
+
+        assert await unless_stopped(quick(), asyncio.Event()) == "connected"
+
+    asyncio.run(run())

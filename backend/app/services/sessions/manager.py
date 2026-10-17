@@ -8,6 +8,7 @@ docs/limitations-and-risks.md, A1). Metadata is mirrored to
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import secrets
 import time
 import uuid
@@ -30,6 +31,27 @@ from app.services.sessions.launch import LaunchConfig
 log = get_logger(__name__)
 
 KIND_BY_PROTOCOL = {"rdp": "guac", "vnc": "guac", "ssh": "terminal", "sftp": "files", "ftp": "files", "ftps": "files"}
+
+
+class Stopped(Exception):  # noqa: N818
+    """The session was closed (cancelled) while it was still connecting."""
+
+
+async def unless_stopped[T](work: Awaitable[T], stop: asyncio.Event) -> T:
+    """Await ``work`` (e.g. connecting to a host that may be down), but give up as soon as ``stop`` is
+    set: ``work`` is cancelled and ``Stopped`` is raised, so a cancelled session stops connecting."""
+    task = asyncio.ensure_future(work)
+    stopper = asyncio.ensure_future(stop.wait())
+    try:
+        await asyncio.wait({task, stopper}, return_when=asyncio.FIRST_COMPLETED)
+    finally:
+        stopper.cancel()
+    if task.done():
+        return task.result()
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError, Exception):
+        await task
+    raise Stopped
 
 
 def utcnow() -> datetime:

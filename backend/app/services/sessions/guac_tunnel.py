@@ -25,7 +25,7 @@ from app.services.sessions.guacd_protocol import (
     Parser,
     encode,
 )
-from app.services.sessions.manager import Session, SessionManager
+from app.services.sessions.manager import Session, SessionManager, Stopped, unless_stopped
 from app.services.sessions.ssh_native import open_connection_set, trusted_key
 from app.services.sessions.ssh_tunnel import SshTunnel
 
@@ -97,12 +97,19 @@ async def run_guac_tunnel(ws: WebSocket, session: Session, manager: SessionManag
 
     manager.begin_attach(session, detach)
     error: str | None = None
-    try:
+
+    async def open_guacd() -> None:
+        """SSH tunnel, guacd connection and handshake (guacd connects to the remote host meanwhile)."""
+        nonlocal client, tunnel
         host, port = launch.host, launch.port
         if launch.tunnel_via is not None:
             async with session_scope() as db:
                 conns = await open_connection_set(db, launch.tunnel_via, settings)
-            tunnel = await SshTunnel.start(conns, launch.host, launch.port, settings)
+            try:
+                tunnel = await SshTunnel.start(conns, launch.host, launch.port, settings)
+            except BaseException:
+                conns.close()
+                raise
             host, port = tunnel.bind_host, tunnel.port
 
         params: dict[str, str]
@@ -133,6 +140,10 @@ async def run_guac_tunnel(ws: WebSocket, session: Session, manager: SessionManag
         if result.unsupported:
             log.warning("guacd_params_unsupported", params=result.unsupported, protocol=session.protocol)
 
+    try:
+        # closing the session (e.g. Cancel while the host does not answer) stops connecting at once
+        await unless_stopped(open_guacd(), stop)
+        assert client is not None
         await ws.send_text(encode(INTERNAL_OPCODE, str(session.id)))
         leftover = client.leftover()
         if leftover:
@@ -146,7 +157,7 @@ async def run_guac_tunnel(ws: WebSocket, session: Session, manager: SessionManag
     except AppError as exc:
         error = exc.detail
         await _send_error(ws, exc.detail, 519)
-    except (WebSocketDisconnect, asyncio.CancelledError):
+    except (WebSocketDisconnect, asyncio.CancelledError, Stopped):
         pass
     except GuacProtocolError as exc:
         error = f"protocol error: {exc}"

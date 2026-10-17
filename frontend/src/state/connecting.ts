@@ -47,7 +47,8 @@ export function beginConnect(name: string, protocol: Protocol): ConnectHandle {
   };
 }
 
-/** The user gave up waiting: the session is closed as soon as the server returns it. */
+/** The user gave up waiting: the card goes away at once (a handle whose card is gone reads as
+ * cancelled); the session is closed in the background as soon as the server returns it. */
 export function cancelConnect(key: string): void {
-  patch(key, { cancelled: true });
+  useConnecting.setState((s) => ({ pending: s.pending.filter((p) => p.key !== key) }));
 }

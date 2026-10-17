@@ -101,6 +101,7 @@ async function startSession(conn: ConnectionRef, target: OpenTarget, loading: Co
         auth_override: authOverride,
       });
     } catch (err) {
+      if (loading.cancelled) return null; // given up meanwhile: no dialogs, no error toast
       if (err instanceof ApiError && err.code === 'credential_choice_required') {
         const problem = err.problem as { folder_id?: string | null; accounts_only?: boolean };
         const chosen = await ask(loading, () => dialogs.chooseCredential(conn.id, conn.name, conn.protocol,
